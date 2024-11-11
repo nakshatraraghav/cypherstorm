@@ -11,6 +11,6 @@ const (
 )
 
 type Encryptor interface {
-	Encrypt(reader io.Reader, writer io.Writer) error
-	Decrypt(reader io.Reader, writer io.Writer) error
+	Encrypt(reader io.Reader, writer io.Writer, key []byte) error
+	Decrypt(reader io.Reader, writer io.Writer, key []byte) error
 }

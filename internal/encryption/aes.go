@@ -9,18 +9,14 @@ import (
 	"io"
 )
 
-type AesGcmEncryptor struct {
-	key []byte
+type AesGcmEncryptor struct{}
+
+func NewAesGcmEncryptor() Encryptor {
+	return &AesGcmEncryptor{}
 }
 
-func NewAesGcmEncryptor(key []byte) *AesGcmEncryptor {
-	return &AesGcmEncryptor{
-		key: key,
-	}
-}
-
-func (e *AesGcmEncryptor) Encrypt(reader io.Reader, writer io.Writer) error {
-	block, err := aes.NewCipher(e.key)
+func (e *AesGcmEncryptor) Encrypt(reader io.Reader, writer io.Writer, key []byte) error {
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return fmt.Errorf("failed to create AES cipher: %w", err)
 	}
@@ -30,13 +26,11 @@ func (e *AesGcmEncryptor) Encrypt(reader io.Reader, writer io.Writer) error {
 		return fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	// Generate and write the nonce
 	nonce := make([]byte, gcm.NonceSize())
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
-	// Write nonce size and nonce to the output
 	err = binary.Write(writer, binary.LittleEndian, uint32(len(nonce)))
 	if err != nil {
 		return fmt.Errorf("failed to write nonce size: %w", err)
@@ -47,8 +41,7 @@ func (e *AesGcmEncryptor) Encrypt(reader io.Reader, writer io.Writer) error {
 		return fmt.Errorf("failed to write nonce: %w", err)
 	}
 
-	// Encrypt data in chunks
-	chunkSize := 1024 * 64 // 64 KB, adjust for memory/performance needs
+	chunkSize := 64 * 1024
 	buffer := make([]byte, chunkSize)
 	var ciphertext []byte
 
@@ -61,7 +54,6 @@ func (e *AesGcmEncryptor) Encrypt(reader io.Reader, writer io.Writer) error {
 			break
 		}
 
-		// Encrypt the chunk; here we use `Seal` which includes the tag for each chunk
 		ciphertext = gcm.Seal(nil, nonce, buffer[:n], nil)
 		if _, err := writer.Write(ciphertext); err != nil {
 			return fmt.Errorf("failed to write ciphertext: %w", err)
@@ -71,8 +63,8 @@ func (e *AesGcmEncryptor) Encrypt(reader io.Reader, writer io.Writer) error {
 	return nil
 }
 
-func (e *AesGcmEncryptor) Decrypt(reader io.Reader, writer io.Writer) error {
-	block, err := aes.NewCipher(e.key)
+func (e *AesGcmEncryptor) Decrypt(reader io.Reader, writer io.Writer, key []byte) error {
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return fmt.Errorf("failed to create AES cipher: %w", err)
 	}
@@ -82,7 +74,6 @@ func (e *AesGcmEncryptor) Decrypt(reader io.Reader, writer io.Writer) error {
 		return fmt.Errorf("failed to create GCM: %w", err)
 	}
 
-	// Read the nonce size and nonce
 	var nonceSize uint32
 	if err := binary.Read(reader, binary.LittleEndian, &nonceSize); err != nil {
 		return fmt.Errorf("failed to read nonce size: %w", err)
@@ -93,8 +84,7 @@ func (e *AesGcmEncryptor) Decrypt(reader io.Reader, writer io.Writer) error {
 		return fmt.Errorf("failed to read nonce: %w", err)
 	}
 
-	// Decrypt data in chunks
-	chunkSize := 1024*64 + gcm.Overhead() // Adjust for the GCM tag size per chunk
+	chunkSize := 1024*64 + gcm.Overhead()
 	buffer := make([]byte, chunkSize)
 
 	for {
@@ -106,13 +96,11 @@ func (e *AesGcmEncryptor) Decrypt(reader io.Reader, writer io.Writer) error {
 			break
 		}
 
-		// Decrypt the chunk
 		plaintext, err := gcm.Open(nil, nonce, buffer[:n], nil)
 		if err != nil {
 			return fmt.Errorf("decryption failed: %w", err)
 		}
 
-		// Write decrypted data to the output writer
 		if _, err := writer.Write(plaintext); err != nil {
 			return fmt.Errorf("failed to write plaintext: %w", err)
 		}
