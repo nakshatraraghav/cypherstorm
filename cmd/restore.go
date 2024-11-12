@@ -13,8 +13,9 @@ import (
 
 var restoreCmd = &cobra.Command{
 	Use:   "restore",
-	Short: "",
-	Long:  "",
+	Short: "Decompress and decrypt files in a secure pipeline",
+	Long: `The "restore" command allows you to decompress and decrypt a specified file or directory.
+It provides options to choose the compression and encryption algorithms, ensuring the recovery of the original data.`,
 	Run: func(cmd *cobra.Command, args []string) {
 
 		password, err := utils.ResolvePasswordFromFlags(password, keyFilePath)
