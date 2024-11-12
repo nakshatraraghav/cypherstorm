@@ -6,3 +6,7 @@ run:
 
 rm:
 	@rm ./cli
+
+key-gen:
+	@openssl rand -out key.bin 32
+	@echo "generated key saved to key.bin"
