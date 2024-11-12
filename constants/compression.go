@@ -1,9 +1,9 @@
 package constants
 
 var (
-	BZIP_COMPRESSION = "bzip"
-	GZIP_COMPRESSION = "gzip"
-	LZ4_COMPRESSION  = "lz4"
-	LZMA_COMPRESSION = "lzma"
-	ZSTD_COMPRESSION = "zstd"
+	GZIP  string = "gzip"
+	BZIP2 string = "bzip2"
+	LZ4   string = "lz4"
+	LZMA  string = "lzma"
+	ZSTD  string = "zstd"
 )

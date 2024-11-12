@@ -8,7 +8,7 @@ import (
 
 type LzmaCompressor struct{}
 
-func NewLzmaCompressor() Compressor {
+func newLzmaCompressor() Compressor {
 	return &LzmaCompressor{}
 }
 

@@ -7,7 +7,7 @@ import (
 
 type GzipCompressor struct{}
 
-func NewGzipCompressor() Compressor {
+func newGzipCompressor() Compressor {
 	return &GzipCompressor{}
 }
 

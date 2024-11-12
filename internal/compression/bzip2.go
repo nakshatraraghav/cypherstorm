@@ -9,7 +9,7 @@ import (
 
 type Bzip2Compressor struct{}
 
-func NewBzipCompressor() Compressor {
+func newBzipCompressor() Compressor {
 	return &Bzip2Compressor{}
 }
 

@@ -1,16 +1,24 @@
 package encryption
 
-import "io"
+import (
+	"fmt"
+	"io"
 
-const (
-	AES_256_GCM        string = "aes-256-gcm"
-	CHACHA20_POLY1305  string = "chacha20poly1305"
-	XCHACHA20_POLY1305 string = "xchacha20poly1305"
-	AES_256_CBC        string = "aes-256-cbc"
-	TWOFISH            string = "twofish"
+	"github.com/nakshatraraghav/cypherstorm/constants"
 )
 
 type Encryptor interface {
 	Encrypt(reader io.Reader, writer io.Writer, key []byte) error
 	Decrypt(reader io.Reader, writer io.Writer, key []byte) error
+}
+
+func NewEncryptor(algorithm string) (Encryptor, error) {
+	switch algorithm {
+	case constants.AES_256_GCM:
+		return newAesGcmEncryptor(), nil
+	case constants.XCHACHA20_POLY1305:
+		return newXChaCha20Poly1305Encryptor(), nil
+	default:
+		return nil, fmt.Errorf("unsupported encryption algorithm: %s", algorithm)
+	}
 }
