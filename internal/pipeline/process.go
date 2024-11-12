@@ -8,13 +8,12 @@ import (
 	"github.com/nakshatraraghav/cypherstorm/internal/archiver"
 	"github.com/nakshatraraghav/cypherstorm/internal/compression"
 	"github.com/nakshatraraghav/cypherstorm/internal/encryption"
-	"github.com/nakshatraraghav/cypherstorm/internal/keyman"
 )
 
 func ProcessPipeline(
 	inputPath,
-	outputPath,
-	password string,
+	outputPath string,
+	password []byte,
 	compressor compression.Compressor,
 	encryptor encryption.Encryptor) error {
 
@@ -45,12 +44,6 @@ func ProcessPipeline(
 		fmt.Printf("WARNING: Could not delete temporary archive at %s: %v\n", tempArchivePath, err)
 	}
 
-	keyManager := keyman.NewKeyManager(32, 16)
-	encryptionKey, err := keyManager.DeriveKeyFromPassword(password)
-	if err != nil {
-		return fmt.Errorf("key derivation from password failed: %w", err)
-	}
-
 	encryptedFile, err := os.Create(outputPath)
 	if err != nil {
 		return fmt.Errorf("could not create output file for encrypted data: %w", err)
@@ -63,7 +56,7 @@ func ProcessPipeline(
 	}
 	defer compressedFileForEncryption.Close()
 
-	if err := encryptor.Encrypt(compressedFileForEncryption, encryptedFile, encryptionKey); err != nil {
+	if err := encryptor.Encrypt(compressedFileForEncryption, encryptedFile, password); err != nil {
 		return fmt.Errorf("encryption of compressed file failed: %w", err)
 	}
 
