@@ -7,6 +7,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	inputPath            string
+	outputPath           string
+	password             string
+	keyFilePath          string
+	compressionAlgorithm string
+	encryptionAlgorithm  string
+)
+
 var rootCmd = &cobra.Command{
 	Use:     "cypherstorm",
 	Short:   "A powerful suite for file compression, encryption and hashing",
