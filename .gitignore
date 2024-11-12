@@ -1,3 +1,4 @@
 build
 cli
 .env
+key.bin
