@@ -8,24 +8,17 @@ import (
 	"github.com/nakshatraraghav/cypherstorm/internal/archiver"
 	"github.com/nakshatraraghav/cypherstorm/internal/compression"
 	"github.com/nakshatraraghav/cypherstorm/internal/encryption"
-	"github.com/nakshatraraghav/cypherstorm/internal/keyman"
 )
 
-func RestorePipeline(
+func DataRecoveryPipeline(
 	inputPath,
-	outputPath,
-	password string,
+	outputPath string,
+	password []byte,
 	compressor compression.Compressor,
 	encryptor encryption.Encryptor) error {
 
 	tempDecryptedPath := filepath.Join(os.TempDir(), "decrypted.tar.cmp")
 	tempDecompressedPath := filepath.Join(os.TempDir(), "decrypted.tar")
-
-	keyManager := keyman.NewKeyManager(32, 16)
-	decryptionKey, err := keyManager.DeriveKeyFromPassword(password)
-	if err != nil {
-		return fmt.Errorf("key derivation from password failed: %w", err)
-	}
 
 	encryptedFile, err := os.Open(inputPath)
 	if err != nil {
@@ -39,7 +32,7 @@ func RestorePipeline(
 	}
 	defer decryptedFile.Close()
 
-	if err := encryptor.Decrypt(encryptedFile, decryptedFile, decryptionKey); err != nil {
+	if err := encryptor.Decrypt(encryptedFile, decryptedFile, password); err != nil {
 		return fmt.Errorf("decryption of encrypted file failed: %w", err)
 	}
 

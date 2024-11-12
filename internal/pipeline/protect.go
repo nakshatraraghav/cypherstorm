@@ -10,7 +10,7 @@ import (
 	"github.com/nakshatraraghav/cypherstorm/internal/encryption"
 )
 
-func ProcessPipeline(
+func DataProtectionPipeline(
 	inputPath,
 	outputPath string,
 	password []byte,
