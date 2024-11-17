@@ -11,7 +11,7 @@ import (
 
 type AesGcmEncryptor struct{}
 
-func newAesGcmEncryptor() Encryptor {
+func NewAesGcmEncryptor() Encryptor {
 	return &AesGcmEncryptor{}
 }
 

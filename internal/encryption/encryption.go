@@ -15,9 +15,9 @@ type Encryptor interface {
 func NewEncryptor(algorithm string) (Encryptor, error) {
 	switch algorithm {
 	case constants.AES_256_GCM:
-		return newAesGcmEncryptor(), nil
+		return NewAesGcmEncryptor(), nil
 	case constants.XCHACHA20_POLY1305:
-		return newXChaCha20Poly1305Encryptor(), nil
+		return NewXChaCha20Poly1305Encryptor(), nil
 	default:
 		return nil, fmt.Errorf("unsupported encryption algorithm: %s", algorithm)
 	}

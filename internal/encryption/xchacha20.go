@@ -11,7 +11,7 @@ import (
 
 type XChaCha20Poly1305Encryptor struct{}
 
-func newXChaCha20Poly1305Encryptor() *XChaCha20Poly1305Encryptor {
+func NewXChaCha20Poly1305Encryptor() *XChaCha20Poly1305Encryptor {
 	return &XChaCha20Poly1305Encryptor{}
 }
 
