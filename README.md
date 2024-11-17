@@ -55,20 +55,125 @@ go build -o cypherstorm
 ## Full Commands References
 
 ```bash
-cypherstorm [command] [flags] <input-path>
+CypherStorm is a cryptographic suite of tools for compressing, encrypting, and hashing files or folders with customizable algorithms, providing flexible, high-security file management
 
-Commands:
-  encrypt    Encrypt files/directories
-  decrypt    Decrypt files
-  hash       Calculate file hash
+Usage:
+  cypherstorm [flags]
+  cypherstorm [command]
+
+Aliases:
+  cypherstorm, cypher, cstorm
+
+Available Commands:
+  benchmark   Benchmark all combination of algorithms
+  completion  Generate the autocompletion script for the specified shell
+  hash        Calculate and display file hashes
+  help        Help about any command
+  protect     Compress and encrypt files or directories in a secure pipeline
+  restore     Decompress and decrypt files in a secure pipeline
+  version     cypherstorm version
 
 Flags:
-  --compression-algo    Compression algorithm to use
-  --encryption-algo     Encryption algorithm to use
-  --key-file           Path to key file
-  --password           Password (or prompt if not provided)
-  --chunk-size         Size of chunks for large file processing
-  --output             Output path
+  -h, --help   help for cypherstorm
+
+Use "cypherstorm [command] --help" for more information about a command.
+```
+
+### Benchmark Command
+
+```bash
+Generate performance report for all compression and encryption combinations
+
+Usage:
+  cypherstorm benchmark [flags]
+
+Flags:
+  -h, --help                help for benchmark
+  --input-path string   input path of the files to benchmark
+
+```
+
+### Hash Command
+
+```bash
+The "hash" command allows you to calculate and display the hash values of files or directories.
+
+Available Hashing Algorithms:
+- md5
+- sha1
+- sha256
+- sha384
+- sha512
+
+Usage:
+  cypherstorm hash [flags]
+
+Flags:
+  --algorithm string    choose required hashing algorithm. Available algorithms: md5, sha1, sha256, sha384, sha512 (default "sha256")
+  -h, --help                help for hash
+  --input-path string   input path of the file/files you want to hash
+```
+
+### Protect Command
+
+```bash
+The "protect" command allows you to compress and encrypt a specified file or directory.
+It provides options to choose the compression and encryption algorithms, ensuring secure and efficient storage or transfer of data.
+
+Available Compression Algorithms:
+  - gzip
+  - bzip2
+  - lz4
+  - lzma
+  - zstd
+
+Available Encryption Algorithms:
+  - aes-256-gcm
+  - xchacha20poly1305
+
+Usage:
+  cypherstorm protect [flags]
+
+Flags:
+  --compression-algo string   choose the compression algorithm (optional) (default "gzip")
+  --encryption-algo string    choose the encryption algorithm (optional) (default "aes-256-gcm")
+  -h, --help                      help for protect
+  --input-path string         input path of the files to process
+  --key-file-path string      file containing the password to encrypt the files with (optional)
+  --output-path string        choose where you want the processed file to output to
+  --password string           password to encrypt the files with (optional)
+
+```
+
+### Restore Command
+
+```bash
+The "restore" command allows you to decompress and decrypt a specified file or directory.
+It provides options to choose the compression and encryption algorithms, ensuring the recovery of the original data.
+
+Available Compression Algorithms:
+  - gzip
+  - bzip2
+  - lz4
+  - lzma
+  - zstd
+
+Available Encryption Algorithms:
+  - aes-256-gcm
+  - xchacha20poly1305
+
+Usage:
+  cypherstorm restore [flags]
+
+Flags:
+  --compression-algo string   choose the compression algorithm (optional) (default "gzip")
+  --encryption-algo string    choose the encryption algorithm (optional) (default "aes-256-gcm")
+  -h, --help                      help for restore
+  --input-path string         input path of the files to process
+  --key-file-path string      file containing the password to encrypt the files with (optional)
+  --output-path string        choose where you want the processed file to output to
+  --password string           password to encrypt the files with (optional)
+
 ```
 
 ## 🔒 Security Features
