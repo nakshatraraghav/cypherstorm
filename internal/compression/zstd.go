@@ -8,7 +8,7 @@ import (
 
 type ZstdCompressor struct{}
 
-func newZstdCompressor() Compressor {
+func NewZstdCompressor() Compressor {
 	return &ZstdCompressor{}
 }
 
