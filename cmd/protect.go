@@ -14,10 +14,20 @@ import (
 var protectCmd = &cobra.Command{
 	Use:   "protect",
 	Short: "Compress and encrypt files or directories in a secure pipeline",
-	Long: `The "protect" command allows you to compress and encrypt a specified file or directory. 
-It provides options to choose the compression and encryption algorithms, ensuring secure and efficient storage or transfer of data.`,
-	Run: func(cmd *cobra.Command, args []string) {
+	Long: `The "protect" command allows you to compress and encrypt a specified file or directory.
+It provides options to choose the compression and encryption algorithms, ensuring secure and efficient storage or transfer of data.
 
+Available Compression Algorithms:
+  - gzip
+  - bzip2
+  - lz4
+  - lzma
+  - zstd
+
+Available Encryption Algorithms:
+  - aes-256-gcm
+  - xchacha20poly1305`,
+	Run: func(cmd *cobra.Command, args []string) {
 		password, err := utils.ResolvePasswordFromFlags(password, keyFilePath)
 		if err != nil {
 			log.Fatal(err)

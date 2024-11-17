@@ -15,9 +15,19 @@ var restoreCmd = &cobra.Command{
 	Use:   "restore",
 	Short: "Decompress and decrypt files in a secure pipeline",
 	Long: `The "restore" command allows you to decompress and decrypt a specified file or directory.
-It provides options to choose the compression and encryption algorithms, ensuring the recovery of the original data.`,
-	Run: func(cmd *cobra.Command, args []string) {
+It provides options to choose the compression and encryption algorithms, ensuring the recovery of the original data.
 
+Available Compression Algorithms:
+  - gzip
+  - bzip2
+  - lz4
+  - lzma
+  - zstd
+
+Available Encryption Algorithms:
+  - aes-256-gcm
+  - xchacha20poly1305`,
+	Run: func(cmd *cobra.Command, args []string) {
 		password, err := utils.ResolvePasswordFromFlags(password, keyFilePath)
 		if err != nil {
 			log.Fatal(err)
