@@ -2,3 +2,4 @@ build
 cli
 .env
 key.bin
+benchmark_report.log
