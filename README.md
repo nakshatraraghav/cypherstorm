@@ -88,8 +88,9 @@ Usage:
   cypherstorm benchmark [flags]
 
 Flags:
-  -h, --help                help for benchmark
-  --input-path string   input path of the files to benchmark
+  -h, --help                 help for benchmark
+  --input-path string    input path of the files to benchmark
+  --output-path string   output path of the files log and excel file
 
 ```
 
