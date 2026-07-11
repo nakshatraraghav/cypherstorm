@@ -24,9 +24,20 @@ func newHashCommand(service Service) *cobra.Command {
 			results, err := service.Hash(command.Context(), app.HashRequest{
 				InputPath: options.inputPath,
 				Algorithm: hashing.ID(options.algorithm),
-			}, nil)
+			}, eventSink(command, "hash"))
 			if err != nil {
 				return err
+			}
+			if outputFormat(command) == "json" {
+				type hashDTO struct {
+					Path   string `json:"path"`
+					Digest string `json:"digest"`
+				}
+				dto := make([]hashDTO, len(results))
+				for i, result := range results {
+					dto[i] = hashDTO{Path: result.Path, Digest: hex.EncodeToString(result.Digest)}
+				}
+				return writeJSON(command, "hash", dto)
 			}
 			for _, result := range results {
 				if _, err := fmt.Fprintf(command.OutOrStdout(), "%s  %s\n", hex.EncodeToString(result.Digest), result.Path); err != nil {

@@ -45,7 +45,7 @@ func prepareOutput(inputPath, outputPath string, overwrite bool) error {
 	return nil
 }
 
-func buildCompressedArchive(ctx context.Context, sourcePath string, codec compress.Codec, ws *fsutil.Workspace, sink EventSink) (string, error) {
+func buildCompressedArchive(ctx context.Context, sourcePath string, codec compress.Codec, ws *fsutil.Workspace, sink EventSink, requested ...archive.CreateOptions) (string, error) {
 	compressed, err := ws.CreateFile("archive.compressed")
 	if err != nil {
 		return "", err
@@ -60,7 +60,11 @@ func buildCompressedArchive(ctx context.Context, sourcePath string, codec compre
 
 	emit(sink, Event{Phase: PhaseArchiving, Detail: sourcePath})
 	emit(sink, Event{Phase: PhaseCompressing, Detail: string(codec.ID())})
-	archiveErr := archive.CreateTar(ctx, sourcePath, writer)
+	var options archive.CreateOptions
+	if len(requested) > 0 {
+		options = requested[0]
+	}
+	archiveErr := archive.CreateTarWithOptions(ctx, sourcePath, writer, options)
 	finalizeErr := writer.Close()
 	if archiveErr != nil || finalizeErr != nil {
 		_ = compressed.Close()

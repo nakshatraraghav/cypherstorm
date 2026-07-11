@@ -9,6 +9,7 @@ import (
 
 	"github.com/nakshatraraghav/cypherstorm/internal/archive"
 	"github.com/nakshatraraghav/cypherstorm/internal/compress"
+	"github.com/nakshatraraghav/cypherstorm/internal/credentialstore"
 	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
 	"github.com/nakshatraraghav/cypherstorm/internal/format"
 	"github.com/nakshatraraghav/cypherstorm/internal/hashing"
@@ -49,17 +50,25 @@ func (c Credential) kdfCredential() (kdf.Credential, error) {
 }
 
 type Config struct {
-	Argon2        kdf.Argon2Params
-	RecordSize    uint32
-	ArchiveLimits archive.ExtractLimits
+	Argon2          kdf.Argon2Params
+	RecordSize      uint32
+	ArchiveLimits   archive.ExtractLimits
+	CredentialStore credentialstore.Store
+	DefaultCodec    compress.CompressionID
+	DefaultCipher   crypto.CipherID
+	VerifyAfter     bool
 }
 
 type Service struct {
 	argon2          kdf.Argon2Params
 	recordSize      uint32
 	archiveLimits   archive.ExtractLimits
+	credentialStore credentialstore.Store
 	now             func() time.Time
 	benchmarkRunner benchmarkRunner
+	defaultCodec    compress.CompressionID
+	defaultCipher   crypto.CipherID
+	verifyAfter     bool
 }
 
 func NewService() (*Service, error) {
@@ -79,11 +88,30 @@ func NewServiceWithConfig(config Config) (*Service, error) {
 	if config.RecordSize > format.MaxRecordSize {
 		return nil, fmt.Errorf("app: record size %d exceeds maximum %d", config.RecordSize, format.MaxRecordSize)
 	}
+	if config.DefaultCodec == "" {
+		config.DefaultCodec = compress.CompressionGzip
+	}
+	if _, err := compress.NewCodec(config.DefaultCodec); err != nil {
+		return nil, err
+	}
+	if config.DefaultCipher == "" {
+		config.DefaultCipher = crypto.AES256GCM
+	}
+	if _, err := crypto.NewCipherSuite(config.DefaultCipher); err != nil {
+		return nil, err
+	}
+	if config.CredentialStore == nil {
+		config.CredentialStore = credentialstore.New()
+	}
 	return &Service{
-		argon2:        config.Argon2,
-		recordSize:    config.RecordSize,
-		archiveLimits: config.ArchiveLimits,
-		now:           time.Now,
+		argon2:          config.Argon2,
+		recordSize:      config.RecordSize,
+		archiveLimits:   config.ArchiveLimits,
+		credentialStore: config.CredentialStore,
+		now:             time.Now,
+		defaultCodec:    config.DefaultCodec,
+		defaultCipher:   config.DefaultCipher,
+		verifyAfter:     config.VerifyAfter,
 	}, nil
 }
 
@@ -124,25 +152,52 @@ func codecFromWireID(id format.CodecID) (compress.Codec, error) {
 }
 
 type ProtectRequest struct {
-	InputPath  string
-	OutputPath string
-	Credential Credential
-	Cipher     crypto.CipherID
-	Codec      compress.CompressionID
-	Overwrite  bool
+	InputPath      string
+	OutputPath     string
+	Credential     Credential
+	Cipher         crypto.CipherID
+	Codec          compress.CompressionID
+	Overwrite      bool
+	Includes       []string
+	Excludes       []string
+	ExcludeVCS     bool
+	ExcludeCache   bool
+	DryRun         bool
+	VerifyAfter    bool
+	Format         string
+	RecipientPaths []string
+	CredentialHint string
+	PublicHint     string
 }
 
 type ProtectResult struct {
-	OutputPath  string
-	InputBytes  int64
-	OutputBytes int64
+	OutputPath   string           `json:"output_path"`
+	InputBytes   int64            `json:"input_bytes"`
+	OutputBytes  int64            `json:"output_bytes"`
+	DryRun       bool             `json:"dry_run"`
+	Selection    SelectionPreview `json:"selection"`
+	Verification *VerifyResult    `json:"verification,omitempty"`
 }
 
+type ConflictPolicy string
+
+const (
+	ConflictFail      ConflictPolicy = "fail"
+	ConflictSkip      ConflictPolicy = "skip"
+	ConflictRename    ConflictPolicy = "rename"
+	ConflictOverwrite ConflictPolicy = "overwrite"
+)
+
 type RestoreRequest struct {
-	InputPath  string
-	OutputPath string
-	Credential Credential
-	Overwrite  bool
+	InputPath     string
+	OutputPath    string
+	Credential    Credential
+	Overwrite     bool
+	Includes      []string
+	Excludes      []string
+	Paths         []string
+	Conflict      ConflictPolicy
+	IdentityPaths []string
 }
 
 type RestoreResult struct {

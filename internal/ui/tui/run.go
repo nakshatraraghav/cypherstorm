@@ -15,6 +15,9 @@ type Service interface {
 	Restore(context.Context, app.RestoreRequest, app.EventSink) (app.RestoreResult, error)
 	Hash(context.Context, app.HashRequest, app.EventSink) ([]app.HashResult, error)
 	Benchmark(context.Context, app.BenchmarkRequest, app.EventSink) (report.Report, error)
+	Inspect(context.Context, app.InspectRequest, app.EventSink) (app.InspectResult, error)
+	Verify(context.Context, app.VerifyRequest, app.EventSink) (app.VerifyResult, error)
+	List(context.Context, app.ListRequest, app.EventSink) (app.ListResult, error)
 }
 
 func Run(ctx context.Context, service Service, input io.Reader, output io.Writer) (err error) {

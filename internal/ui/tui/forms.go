@@ -20,6 +20,9 @@ const (
 	formRestore
 	formHash
 	formBenchmark
+	formInspect
+	formVerify
+	formList
 )
 
 type slotKind uint8
@@ -100,6 +103,16 @@ func (f *operationForm) slots() []slotKind {
 		return append(slots, slotCodec, slotCipher, slotOverwrite, slotSubmit)
 	case formRestore:
 		slots := []slotKind{slotInput, slotOutput, slotCredential}
+		if f.credential == app.CredentialPassword {
+			slots = append(slots, slotPassword)
+		} else {
+			slots = append(slots, slotKeyFile)
+		}
+		return append(slots, slotSubmit)
+	case formInspect:
+		return []slotKind{slotInput, slotSubmit}
+	case formVerify, formList:
+		slots := []slotKind{slotInput, slotCredential}
 		if f.credential == app.CredentialPassword {
 			slots = append(slots, slotPassword)
 		} else {
@@ -312,6 +325,12 @@ func (f *operationForm) view(style styles, width int) string {
 		title, description = "Hash", "Calculate digests for files or folders"
 	case formBenchmark:
 		title, description = "Benchmark", "Compare every codec and cipher combination"
+	case formInspect:
+		title, description = "Inspect", "Inspect a protected-file header without a credential"
+	case formVerify:
+		title, description = "Verify", "Authenticate and fully validate a protected archive"
+	case formList:
+		title, description = "Browse archive", "Authenticate and list protected archive contents"
 	}
 	lines := []string{style.brand.Render("CYPHERSTORM"), style.title.Render(title), style.muted.Render(description), ""}
 	for index, slot := range f.slots() {

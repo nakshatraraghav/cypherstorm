@@ -48,7 +48,7 @@ func (m *Model) openPicker(kind formKind, slot slotKind) tea.Cmd {
 		title = "Choose a source"
 		picker.FileAllowed = true
 		picker.DirAllowed = true
-		if kind == formRestore {
+		if kind == formRestore || kind == formInspect || kind == formVerify || kind == formList {
 			picker.DirAllowed = false
 			picker.AllowedTypes = []string{".cys"}
 		}
@@ -266,6 +266,12 @@ func (m *Model) formForKind(kind formKind) *operationForm {
 		return &m.hash
 	case formBenchmark:
 		return &m.benchmark
+	case formInspect:
+		return &m.inspect
+	case formVerify:
+		return &m.verify
+	case formList:
+		return &m.list
 	default:
 		return &m.protect
 	}
@@ -281,6 +287,12 @@ func screenForForm(kind formKind) screen {
 		return screenHash
 	case formBenchmark:
 		return screenBenchmark
+	case formInspect:
+		return screenInspect
+	case formVerify:
+		return screenVerify
+	case formList:
+		return screenList
 	default:
 		return screenHome
 	}

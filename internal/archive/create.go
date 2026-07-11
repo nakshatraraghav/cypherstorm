@@ -12,10 +12,27 @@ import (
 	"strings"
 )
 
+type SelectionDecision uint8
+
+const (
+	SelectionInclude SelectionDecision = iota
+	SelectionExclude
+	SelectionPrune
+)
+
+type CreateOptions struct {
+	Select func(path string, info fs.FileInfo) (SelectionDecision, error)
+	Visit  func(path string, info fs.FileInfo, decision SelectionDecision)
+}
+
 // CreateTar walks sourceRoot and writes a tar stream to w. See the
 // package doc comment for the exact set of supported entry types and the
 // metadata preservation and cancellation policy.
 func CreateTar(ctx context.Context, sourceRoot string, w io.Writer) error {
+	return CreateTarWithOptions(ctx, sourceRoot, w, CreateOptions{})
+}
+
+func CreateTarWithOptions(ctx context.Context, sourceRoot string, w io.Writer, options CreateOptions) error {
 	rootAbs, err := filepath.Abs(sourceRoot)
 	if err != nil {
 		return fmt.Errorf("archive: resolve source root %q: %w", sourceRoot, err)
@@ -53,6 +70,22 @@ func CreateTar(ctx context.Context, sourceRoot string, w io.Writer) error {
 		info, err := os.Lstat(path)
 		if err != nil {
 			return fmt.Errorf("archive: lstat %q: %w", path, err)
+		}
+		decision := SelectionInclude
+		if options.Select != nil {
+			decision, err = options.Select(filepath.ToSlash(relPath), info)
+			if err != nil {
+				return err
+			}
+		}
+		if options.Visit != nil {
+			options.Visit(filepath.ToSlash(relPath), info, decision)
+		}
+		if decision == SelectionPrune && info.IsDir() {
+			return filepath.SkipDir
+		}
+		if decision != SelectionInclude {
+			return nil
 		}
 
 		switch {

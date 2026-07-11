@@ -24,7 +24,13 @@ func newBenchmarkCommand(service Service) *cobra.Command {
 			result, benchmarkErr := service.Benchmark(command.Context(), app.BenchmarkRequest{
 				InputPath:  options.inputPath,
 				OutputPath: options.outputPath,
-			}, nil)
+			}, eventSink(command, "benchmark"))
+			if outputFormat(command) == "json" {
+				if benchmarkErr != nil {
+					return benchmarkErr
+				}
+				return writeJSON(command, "benchmark", result)
+			}
 			renderErr := report.WriteTextReport(command.OutOrStdout(), &result)
 			if renderErr == nil && options.outputPath != "" {
 				_, renderErr = fmt.Fprintf(command.OutOrStdout(), "\nExcel report: %s\n", options.outputPath)

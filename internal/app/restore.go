@@ -4,120 +4,254 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"github.com/nakshatraraghav/cypherstorm/internal/archive"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/compress"
 	"github.com/nakshatraraghav/cypherstorm/internal/fsutil"
+	"github.com/nakshatraraghav/cypherstorm/internal/selection"
 )
 
 func (s *Service) Restore(ctx context.Context, req RestoreRequest, sink EventSink) (result RestoreResult, retErr error) {
-	emit(sink, Event{Phase: PhaseValidating})
-	inputInfo, err := os.Lstat(req.InputPath)
-	if err != nil {
-		return RestoreResult{}, fmt.Errorf("app: inspect protected input %q: %w", req.InputPath, err)
-	}
-	if !inputInfo.Mode().IsRegular() || inputInfo.Mode()&os.ModeSymlink != 0 {
-		return RestoreResult{}, fmt.Errorf("app: protected input %q must be a regular file", req.InputPath)
+	if req.Conflict == "" {
+		req.Conflict = ConflictFail
 	}
 	if req.Overwrite {
-		return RestoreResult{}, fmt.Errorf("app: restore overwrite is unsupported; destination must not exist")
+		req.Conflict = ConflictOverwrite
 	}
-	if err := prepareOutput(req.InputPath, req.OutputPath, false); err != nil {
+	switch req.Conflict {
+	case ConflictFail, ConflictSkip, ConflictRename, ConflictOverwrite:
+	default:
+		return RestoreResult{}, fmt.Errorf("app: invalid conflict policy %q", req.Conflict)
+	}
+	if req.OutputPath == "" {
+		return RestoreResult{}, fmt.Errorf("app: output path is required")
+	}
+	if err := fsutil.ValidateNoContainment(req.InputPath, req.OutputPath); err != nil {
 		return RestoreResult{}, err
 	}
-	credential, err := req.Credential.kdfCredential()
+	destInfo, destErr := os.Lstat(req.OutputPath)
+	destExists := destErr == nil
+	if destErr != nil && !errors.Is(destErr, fs.ErrNotExist) {
+		return RestoreResult{}, destErr
+	}
+	if destExists && (!destInfo.IsDir() || destInfo.Mode()&os.ModeSymlink != 0) {
+		return RestoreResult{}, fmt.Errorf("app: restore destination must be a non-symlink directory")
+	}
+	if destExists && req.Conflict == ConflictFail {
+		return RestoreResult{}, fmt.Errorf("app: restore destination %q already exists", req.OutputPath)
+	}
+	parent := filepath.Dir(req.OutputPath)
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return RestoreResult{}, err
+	}
+	emit(sink, Event{Phase: PhaseDecrypting})
+	workspace, payload, codecID, err := s.decodeAuthenticated(ctx, req.InputPath, req.Credential, req.IdentityPaths, sink)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-
-	workspace, err := fsutil.NewWorkspace()
+	defer func() { retErr = errors.Join(retErr, workspace.Close()) }()
+	codec, err := compress.NewCodec(codecID)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	defer func() {
-		retErr = errors.Join(retErr, workspace.Close())
-	}()
-
-	compressed, err := workspace.CreateFile("decrypted.compressed")
+	compressed, err := os.Open(payload)
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	protected, err := os.Open(req.InputPath)
+	decoder, err := codec.NewReader(compressed)
 	if err != nil {
 		_ = compressed.Close()
-		return RestoreResult{}, fmt.Errorf("app: open protected input: %w", err)
-	}
-
-	emit(sink, Event{Phase: PhaseDecrypting})
-	wireCodec, decryptErr := crypto.Decrypt(ctx, protected, compressed, credential)
-	inputCloseErr := protected.Close()
-	var compressedCloseErr error
-	if decryptErr == nil {
-		if syncErr := compressed.Sync(); syncErr != nil {
-			decryptErr = fmt.Errorf("app: sync authenticated compressed payload: %w", syncErr)
-		}
-	}
-	if closeErr := compressed.Close(); closeErr != nil {
-		compressedCloseErr = fmt.Errorf("app: close authenticated compressed payload: %w", closeErr)
-	}
-	if decryptErr != nil || inputCloseErr != nil || compressedCloseErr != nil {
-		return RestoreResult{}, errors.Join(decryptErr, wrapError("app: close protected input", inputCloseErr), compressedCloseErr)
-	}
-
-	codec, err := codecFromWireID(wireCodec)
-	if err != nil {
 		return RestoreResult{}, err
 	}
-	compressedInput, err := os.Open(filepath.Join(workspace.Root(), "decrypted.compressed"))
+	incoming, err := os.MkdirTemp(parent, ".cypherstorm-restore-*")
 	if err != nil {
-		return RestoreResult{}, fmt.Errorf("app: reopen compressed payload: %w", err)
-	}
-	decoder, err := codec.NewReader(compressedInput)
-	if err != nil {
-		_ = compressedInput.Close()
-		return RestoreResult{}, fmt.Errorf("app: create %s decompressor: %w", codec.ID(), err)
-	}
-
-	parent := filepath.Dir(req.OutputPath)
-	stagedRoot, err := os.MkdirTemp(parent, ".cypherstorm-restore-*")
-	if err != nil {
-		_ = decoder.Close()
-		_ = compressedInput.Close()
-		return RestoreResult{}, fmt.Errorf("app: create restore staging directory: %w", err)
-	}
-	if err := os.Chmod(stagedRoot, 0o700); err != nil {
-		_ = os.RemoveAll(stagedRoot)
-		_ = decoder.Close()
-		_ = compressedInput.Close()
-		return RestoreResult{}, fmt.Errorf("app: secure restore staging directory: %w", err)
+		return RestoreResult{}, err
 	}
 	published := false
 	defer func() {
 		if !published {
-			retErr = errors.Join(retErr, wrapError("app: remove restore staging directory", os.RemoveAll(stagedRoot)))
+			retErr = errors.Join(retErr, os.RemoveAll(incoming))
 		}
 	}()
-
+	selector := restoreEntrySelector(req)
 	emit(sink, Event{Phase: PhaseDecompressing, Detail: string(codec.ID())})
 	emit(sink, Event{Phase: PhaseExtracting, Detail: req.OutputPath})
-	extractErr := archive.ExtractTar(ctx, decoder, stagedRoot, s.archiveLimits)
-	decoderCloseErr := decoder.Close()
-	compressedInputCloseErr := compressedInput.Close()
-	if extractErr != nil || decoderCloseErr != nil || compressedInputCloseErr != nil {
-		return RestoreResult{}, errors.Join(
-			extractErr,
-			wrapError("app: close decompressor", decoderCloseErr),
-			wrapError("app: close compressed payload", compressedInputCloseErr),
-		)
+	_, extractErr := archive.ExtractTarSelected(ctx, decoder, incoming, s.archiveLimits, selector)
+	closeErr := errors.Join(decoder.Close(), compressed.Close())
+	if extractErr != nil || closeErr != nil {
+		return RestoreResult{}, errors.Join(extractErr, closeErr)
 	}
-
-	emit(sink, Event{Phase: PhasePublishing, Detail: req.OutputPath})
-	if err := fsutil.PublishDirectory(stagedRoot, req.OutputPath); err != nil {
+	if !destExists {
+		if err = fsutil.PublishDirectory(incoming, req.OutputPath); err != nil {
+			return RestoreResult{}, err
+		}
+		published = true
+		return RestoreResult{OutputPath: req.OutputPath}, nil
+	}
+	stage, err := os.MkdirTemp(parent, ".cypherstorm-merge-*")
+	if err != nil {
 		return RestoreResult{}, err
 	}
+	stagePublished := false
+	defer func() {
+		if !stagePublished {
+			retErr = errors.Join(retErr, os.RemoveAll(stage))
+		}
+	}()
+	if err = copyExistingTree(ctx, req.OutputPath, stage); err != nil {
+		return RestoreResult{}, err
+	}
+	if err = mergeTrees(incoming, stage, req.Conflict); err != nil {
+		return RestoreResult{}, err
+	}
+	if err = fsutil.ReplaceDirectory(stage, req.OutputPath); err != nil {
+		return RestoreResult{}, err
+	}
+	stagePublished = true
 	published = true
-	emit(sink, Event{Phase: PhaseComplete, Detail: req.OutputPath})
+	_ = os.RemoveAll(incoming)
 	return RestoreResult{OutputPath: req.OutputPath}, nil
+}
+
+func restoreEntrySelector(req RestoreRequest) archive.ExtractSelector {
+	return func(entry archive.Entry) (bool, error) {
+		selected := len(req.Includes) == 0 && len(req.Paths) == 0
+		for _, p := range req.Paths {
+			clean := strings.TrimSuffix(filepath.ToSlash(filepath.Clean(p)), "/")
+			if entry.Path == clean || strings.HasPrefix(entry.Path, clean+"/") {
+				selected = true
+			}
+		}
+		for _, p := range req.Includes {
+			ok, err := selection.Match(p, entry.Path)
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				selected = true
+			}
+		}
+		for _, p := range req.Excludes {
+			ok, err := selection.Match(p, entry.Path)
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				return false, nil
+			}
+		}
+		return selected, nil
+	}
+}
+
+func copyExistingTree(ctx context.Context, src, dst string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("app: conflict modes reject existing symlink %q", path)
+		}
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("app: conflict modes reject special node %q", path)
+		}
+		if err = os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+			return err
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		out, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, info.Mode().Perm())
+		if err != nil {
+			_ = in.Close()
+			return err
+		}
+		_, copyErr := copyWithContext(ctx, out, in)
+		return errors.Join(copyErr, in.Close(), out.Close())
+	})
+}
+
+func mergeTrees(src, dst string, policy ConflictPolicy) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	for _, e := range entries {
+		from, to := filepath.Join(src, e.Name()), filepath.Join(dst, e.Name())
+		srcInfo, err := os.Lstat(from)
+		if err != nil {
+			return err
+		}
+		dstInfo, err := os.Lstat(to)
+		if errors.Is(err, fs.ErrNotExist) {
+			if err = os.Rename(from, to); err != nil {
+				return err
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if srcInfo.IsDir() && dstInfo.IsDir() && srcInfo.Mode()&os.ModeSymlink == 0 && dstInfo.Mode()&os.ModeSymlink == 0 {
+			if err = mergeTrees(from, to, policy); err != nil {
+				return err
+			}
+			_ = os.Remove(from)
+			continue
+		}
+		switch policy {
+		case ConflictSkip:
+			continue
+		case ConflictOverwrite:
+			if err = os.RemoveAll(to); err != nil {
+				return err
+			}
+			if err = os.Rename(from, to); err != nil {
+				return err
+			}
+		case ConflictRename:
+			renamed := ""
+			for i := 1; i <= 10000; i++ {
+				candidate := fmt.Sprintf("%s.restored-%d", to, i)
+				if _, candidateErr := os.Lstat(candidate); errors.Is(candidateErr, fs.ErrNotExist) {
+					renamed = candidate
+					break
+				}
+			}
+			if renamed == "" {
+				return fmt.Errorf("app: cannot allocate deterministic rename for %q", to)
+			}
+			if err = os.Rename(from, renamed); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("app: unexpected conflict at %q", to)
+		}
+	}
+	return nil
 }

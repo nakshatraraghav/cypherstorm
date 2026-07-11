@@ -26,6 +26,9 @@ const (
 	screenRestore
 	screenHash
 	screenBenchmark
+	screenInspect
+	screenVerify
+	screenList
 	screenHelp
 	screenPicker
 	screenDropdown
@@ -42,6 +45,9 @@ const (
 	operationRestore
 	operationHash
 	operationBenchmark
+	operationInspect
+	operationVerify
+	operationList
 )
 
 type Model struct {
@@ -56,6 +62,9 @@ type Model struct {
 	restore     operationForm
 	hash        operationForm
 	benchmark   operationForm
+	inspect     operationForm
+	verify      operationForm
+	list        operationForm
 	picker      *pickerState
 	dropdown    *dropdownState
 	baseContext context.Context
@@ -89,6 +98,9 @@ func NewModelWithContext(ctx context.Context, service Service) Model {
 		restore:     newOperationForm(formRestore),
 		hash:        newOperationForm(formHash),
 		benchmark:   newOperationForm(formBenchmark),
+		inspect:     newOperationForm(formInspect),
+		verify:      newOperationForm(formVerify),
+		list:        newOperationForm(formList),
 	}
 }
 
@@ -193,6 +205,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case screenBenchmark:
 		command, action := m.benchmark.update(message)
 		return m.handleFormAction(formBenchmark, action, command)
+	case screenInspect:
+		command, action := m.inspect.update(message)
+		return m.handleFormAction(formInspect, action, command)
+	case screenVerify:
+		command, action := m.verify.update(message)
+		return m.handleFormAction(formVerify, action, command)
+	case screenList:
+		command, action := m.list.update(message)
+		return m.handleFormAction(formList, action, command)
 	case screenConfirm:
 		if isKey && key.String() == "enter" {
 			return m.startOperation()
@@ -229,7 +250,7 @@ func (m Model) updateHome(message tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	const menuCount = 5
+	const menuCount = 8
 	switch key.String() {
 	case "up", "k":
 		m.homeIndex = cycle(m.homeIndex, -1, menuCount)
@@ -243,10 +264,16 @@ func (m Model) updateHome(message tea.Msg) (tea.Model, tea.Cmd) {
 		case 1:
 			m.screen = screenRestore
 		case 2:
-			m.screen = screenHash
+			m.screen = screenInspect
 		case 3:
-			m.screen = screenBenchmark
+			m.screen = screenVerify
 		case 4:
+			m.screen = screenList
+		case 5:
+			m.screen = screenHash
+		case 6:
+			m.screen = screenBenchmark
+		case 7:
 			m.screen = screenHelp
 		}
 	}
@@ -315,6 +342,60 @@ func (m *Model) prepareBenchmark() {
 	}
 	m.pendingKind = operationBenchmark
 	m.pending = app.BenchmarkRequest{InputPath: m.benchmark.inputPath, OutputPath: outputPath}
+	m.validation = ""
+	m.screen = screenConfirm
+}
+func (m *Model) prepareInspect() {
+	if m.inspect.inputPath == "" {
+		m.validation = "protected input is required"
+		return
+	}
+	if _, err := os.Lstat(m.inspect.inputPath); err != nil {
+		m.validation = fmt.Sprintf("input path: %v", err)
+		return
+	}
+	m.pendingKind = operationInspect
+	m.pending = app.InspectRequest{InputPath: m.inspect.inputPath}
+	m.validation = ""
+	m.screen = screenConfirm
+}
+
+func (m *Model) prepareVerify() {
+	if m.verify.inputPath == "" {
+		m.validation = "protected input is required"
+		return
+	}
+	if _, err := os.Lstat(m.verify.inputPath); err != nil {
+		m.validation = fmt.Sprintf("input path: %v", err)
+		return
+	}
+	credential, err := formCredential(&m.verify, false)
+	if err != nil {
+		m.validation = err.Error()
+		return
+	}
+	m.pendingKind = operationVerify
+	m.pending = app.VerifyRequest{InputPath: m.verify.inputPath, Credential: credential, Mode: app.VerifyFull}
+	m.validation = ""
+	m.screen = screenConfirm
+}
+
+func (m *Model) prepareList() {
+	if m.list.inputPath == "" {
+		m.validation = "protected input is required"
+		return
+	}
+	if _, err := os.Lstat(m.list.inputPath); err != nil {
+		m.validation = fmt.Sprintf("input path: %v", err)
+		return
+	}
+	credential, err := formCredential(&m.list, false)
+	if err != nil {
+		m.validation = err.Error()
+		return
+	}
+	m.pendingKind = operationList
+	m.pending = app.ListRequest{InputPath: m.list.inputPath, Credential: credential}
 	m.validation = ""
 	m.screen = screenConfirm
 }
@@ -417,6 +498,14 @@ func operationCommand(service Service, ctx context.Context, operationID uint64, 
 		case app.BenchmarkRequest:
 			message.value, message.err = service.Benchmark(ctx, request, sink)
 			message.outputPath = request.OutputPath
+		case app.InspectRequest:
+			message.value, message.err = service.Inspect(ctx, request, sink)
+		case app.VerifyRequest:
+			message.value, message.err = service.Verify(ctx, request, sink)
+			clearCredential(&request.Credential)
+		case app.ListRequest:
+			message.value, message.err = service.List(ctx, request, sink)
+			clearCredential(&request.Credential)
 		default:
 			message.err = fmt.Errorf("tui: invalid pending operation")
 		}
@@ -466,6 +555,19 @@ func (m *Model) setResult(message operationDoneMsg) {
 		for _, failure := range value.Failures {
 			m.resultLines = append(m.resultLines, fmt.Sprintf("%s + %s: %v", failure.Combination.Codec, failure.Combination.Cipher, failure.Err))
 		}
+	case app.InspectResult:
+		m.resultTitle = "Inspection"
+		m.resultLines = []string{fmt.Sprintf("Format: v%d", value.FormatVersion), "Cipher: " + string(value.Cipher), "Compression: " + string(value.Codec), fmt.Sprintf("Record size: %d", value.RecordSize), "Header is unauthenticated"}
+	case app.VerifyResult:
+		m.resultTitle = "Verification complete"
+		m.resultLines = []string{fmt.Sprintf("Authenticated: %t", value.Authenticated), fmt.Sprintf("Archive valid: %t", value.ArchiveValidated), fmt.Sprintf("Entries: %d", value.Summary.Entries)}
+	case app.ListResult:
+		m.resultTitle = "Archive contents"
+		m.resultLines = make([]string, 0, len(value.Entries)+1)
+		for _, entry := range value.Entries {
+			m.resultLines = append(m.resultLines, fmt.Sprintf("%-9s %10d %s", entry.Type, entry.Size, entry.Path))
+		}
+		m.resultLines = append(m.resultLines, fmt.Sprintf("%d entries, %d bytes", value.Summary.Entries, value.Summary.Bytes))
 	default:
 		m.resultTitle = "Operation complete"
 		m.resultLines = nil
@@ -475,6 +577,9 @@ func (m *Model) setResult(message operationDoneMsg) {
 func (m *Model) clearSecrets() {
 	m.protect.clearSecrets()
 	m.restore.clearSecrets()
+	m.inspect.clearSecrets()
+	m.verify.clearSecrets()
+	m.list.clearSecrets()
 	m.discardPending()
 }
 
@@ -483,6 +588,12 @@ func (m *Model) discardPending() {
 		clearCredential(&request.Credential)
 	}
 	if request, ok := m.pending.(app.RestoreRequest); ok {
+		clearCredential(&request.Credential)
+	}
+	if request, ok := m.pending.(app.VerifyRequest); ok {
+		clearCredential(&request.Credential)
+	}
+	if request, ok := m.pending.(app.ListRequest); ok {
 		clearCredential(&request.Credential)
 	}
 	m.pending = nil
@@ -509,8 +620,15 @@ func screenForOperation(kind operationKind) screen {
 		return screenHash
 	case operationBenchmark:
 		return screenBenchmark
+	case operationInspect:
+		return screenInspect
+	case operationVerify:
+		return screenVerify
+	case operationList:
+		return screenList
 	default:
 		return screenHome
+
 	}
 }
 
@@ -547,6 +665,12 @@ func (m Model) handleFormAction(kind formKind, action formAction, command tea.Cm
 			m.prepareHash()
 		case formBenchmark:
 			m.prepareBenchmark()
+		case formInspect:
+			m.prepareInspect()
+		case formVerify:
+			m.prepareVerify()
+		case formList:
+			m.prepareList()
 		}
 	}
 	return m, command
@@ -576,6 +700,12 @@ func (m Model) View() string {
 		body = m.formView(m.benchmark)
 	case screenHelp:
 		body = m.helpView()
+	case screenInspect:
+		body = m.formView(m.inspect)
+	case screenVerify:
+		body = m.formView(m.verify)
+	case screenList:
+		body = m.formView(m.list)
 	case screenConfirm:
 		body = m.confirmView()
 	case screenRunning:
@@ -596,7 +726,7 @@ func (m Model) View() string {
 }
 
 func (m Model) homeView() string {
-	items := []string{"Protect", "Restore", "Hash", "Benchmark", "Help / About"}
+	items := []string{"Protect", "Restore", "Inspect", "Verify", "Browse archive", "Hash", "Benchmark", "Help / About"}
 	lines := []string{
 		m.styles.brand.Render("CYPHERSTORM"),
 		m.styles.muted.Render("Private files, protected locally"),
@@ -634,6 +764,12 @@ func (m Model) confirmView() string {
 		summary = fmt.Sprintf("Hash\nInput: %s\nAlgorithm: %s", request.InputPath, request.Algorithm)
 	case app.BenchmarkRequest:
 		summary = fmt.Sprintf("Benchmark\nInput: %s\nReport: %s", request.InputPath, request.OutputPath)
+	case app.InspectRequest:
+		summary = fmt.Sprintf("Inspect\nInput: %s\nHeader fields are unauthenticated", request.InputPath)
+	case app.VerifyRequest:
+		summary = fmt.Sprintf("Verify\nInput: %s\nMode: %s", request.InputPath, request.Mode)
+	case app.ListRequest:
+		summary = fmt.Sprintf("Browse archive\nInput: %s", request.InputPath)
 	}
 	return m.styles.title.Render("Confirm") + "\n\n" + summary + "\n\n" + m.styles.help.Render("Enter: run  Esc: edit")
 }

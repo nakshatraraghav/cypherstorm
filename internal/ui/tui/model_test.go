@@ -37,6 +37,15 @@ func (f *fakeService) Hash(_ context.Context, _ app.HashRequest, _ app.EventSink
 func (f *fakeService) Benchmark(_ context.Context, _ app.BenchmarkRequest, _ app.EventSink) (report.Report, error) {
 	return f.benchmark, f.benchmarkErr
 }
+func (f *fakeService) Inspect(_ context.Context, _ app.InspectRequest, _ app.EventSink) (app.InspectResult, error) {
+	return app.InspectResult{}, nil
+}
+func (f *fakeService) Verify(_ context.Context, _ app.VerifyRequest, _ app.EventSink) (app.VerifyResult, error) {
+	return app.VerifyResult{}, nil
+}
+func (f *fakeService) List(_ context.Context, _ app.ListRequest, _ app.EventSink) (app.ListResult, error) {
+	return app.ListResult{}, nil
+}
 
 func key(value string) tea.KeyMsg {
 	switch value {
@@ -76,7 +85,7 @@ func updateModel(t *testing.T, model Model, message tea.Msg) Model {
 }
 
 func TestHomeNavigationReachesEveryForm(t *testing.T) {
-	want := []screen{screenProtect, screenRestore, screenHash, screenBenchmark, screenHelp}
+	want := []screen{screenProtect, screenRestore, screenInspect, screenVerify, screenList, screenHash, screenBenchmark, screenHelp}
 	for index, expected := range want {
 		model := NewModel(&fakeService{})
 		for range index {
