@@ -1,186 +1,172 @@
-# CypherStorm 🔐
+# CypherStorm
 
-CypherStorm is a powerful, flexible cryptographic suite that allows you to securely compress and encrypt files and directories using various algorithms. Built with Go, it provides a seamless CLI experience for file security operations.
+CypherStorm is a Go application for authenticated file protection and restoration, structured hashing, and deterministic compression/encryption benchmarks. The same UI-neutral application service powers both the Cobra CLI and the Bubble Tea terminal interface.
 
-## 🚀 Features
+## Security status
 
-- **Multiple Compression Algorithms**
+The current source tree uses the versioned CypherStorm v1 protected-file format. The legacy unversioned formats were deleted because they reused AEAD nonces and could not restore password-protected output. Legacy artifacts are intentionally unsupported and are rejected; there is no compatibility shim.
 
-  - GZIP (fast, widely supported)
-  - ZSTD (excellent compression ratio/speed)
-  - LZ4 (extremely fast)
-  - BZIP2 (high compression ratio)
-  - LZMA (highest compression ratio)
+The v1 implementation currently provides:
 
-- **Strong Encryption Options**
+- AES-256-GCM and XChaCha20-Poly1305 suites;
+- a fresh per-file salt and HKDF-derived, cipher-domain-separated file key;
+- bounded Argon2id password derivation with serialized parameters;
+- unique monotonic record nonces and sequence-bound associated data;
+- an authenticated final record committing record and byte counts;
+- bounded record/header parsing;
+- private per-operation staging and atomic final publication;
+- transactional restore into a new destination directory;
+- bounded archive extraction with portable path and symlink validation.
 
-  - AES-256-GCM (fast, secure)
-  - ChaCha20-Poly1305 (modern, excellent for mobile)
-  - XChaCha20-Poly1305 (extended nonce version)
-  - AES-256-CBC with HMAC
-  - Twofish
+See [SECURITY.md](SECURITY.md) for the security model and [FORMAT.md](FORMAT.md) for the compatibility contract.
 
-- **File Hashing**
+## Requirements
 
-  - SHA-256
-  - SHA-512
-  - BLAKE2b
-  - SHA3-256
-  - BLAKE3
+- Go 1.23.2 or newer; `go.mod` is authoritative.
+- A terminal for the full-screen TUI. Explicit CLI commands work noninteractively.
+- OpenSSL only for the optional `make key-gen` helper.
 
-- **Advanced Features**
-  - Stream processing for files larger than RAM
-  - Progress tracking
-  - Flexible key management
-  - Directory archival support
+## Build and test
 
-## 📋 Prerequisites
-
-- Go 1.19 or higher
-- Git
-
-## 🛠️ Installation
-
-```bash
-# Clone the repository
-git clone https://github.com/yourusername/cypherstorm.git
-
-# Navigate to the project directory
-cd cypherstorm
-
-# Build the project
-go build -o cypherstorm
+```sh
+make build
+make test
 ```
 
-## Full Commands References
+The binary is written to `./cypherstorm`.
 
-```bash
-CypherStorm is a cryptographic suite of tools for compressing, encrypting, and hashing files or folders with customizable algorithms, providing flexible, high-security file management
+## Entry behavior
 
-Usage:
-  cypherstorm [flags]
-  cypherstorm [command]
-
-Aliases:
-  cypherstorm, cypher, cstorm
-
-Available Commands:
-  benchmark   Benchmark all combination of algorithms
-  completion  Generate the autocompletion script for the specified shell
-  hash        Calculate and display file hashes
-  help        Help about any command
-  protect     Compress and encrypt files or directories in a secure pipeline
-  restore     Decompress and decrypt files in a secure pipeline
-  version     cypherstorm version
-
-Flags:
-  -h, --help   help for cypherstorm
-
-Use "cypherstorm [command] --help" for more information about a command.
+```text
+cypherstorm              interactive stdin/stdout: open TUI Home
+cypherstorm              noninteractive: print plain help and exit
+cypherstorm tui          explicitly open the TUI
+cypherstorm --help       always print Cobra help; never open the TUI
 ```
 
-### Benchmark Command
+Explicit `protect`, `restore`, `hash`, `benchmark`, and `version` commands always stay on the CLI path.
 
-```bash
-Generate performance report for all compression and encryption combinations
+## Credentials
 
-Usage:
-  cypherstorm benchmark [flags]
+Password values are not accepted as command-line arguments. Without a credential flag, `protect` and `restore` read a masked password from an interactive terminal. Protect asks for confirmation.
 
-Flags:
-  -h, --help                 help for benchmark
-  --input-path string    input path of the files to benchmark
-  --output-path string   output path of the files log and excel file
+For automation, pass the password on standard input:
 
+```sh
+cypherstorm protect \
+  --input-path ./document.txt \
+  --output-path ./document.cys \
+  --password-stdin < ./password-input
 ```
 
-### Hash Command
+A raw-key file is a separate credential kind. It must be a regular, non-symlink file containing exactly 32 binary bytes. On Unix, its permissions must be `0600` or stricter.
 
-```bash
-The "hash" command allows you to calculate and display the hash values of files or directories.
-
-Available Hashing Algorithms:
-- md5
-- sha1
-- sha256
-- sha384
-- sha512
-
-Usage:
-  cypherstorm hash [flags]
-
-Flags:
-  --algorithm string    choose required hashing algorithm. Available algorithms: md5, sha1, sha256, sha384, sha512 (default "sha256")
-  -h, --help                help for hash
-  --input-path string   input path of the file/files you want to hash
+```sh
+make key-gen
+cypherstorm protect \
+  --input-path ./document.txt \
+  --output-path ./document.cys \
+  --key-file ./key.bin
 ```
 
-### Protect Command
+Do not lose the password or raw key. CypherStorm has no recovery mechanism.
 
-```bash
-The "protect" command allows you to compress and encrypt a specified file or directory.
-It provides options to choose the compression and encryption algorithms, ensuring secure and efficient storage or transfer of data.
+## Protect
 
-Available Compression Algorithms:
-  - gzip
-  - bzip2
-  - lz4
-  - lzma
-  - zstd
-
-Available Encryption Algorithms:
-  - aes-256-gcm
-  - xchacha20poly1305
-
-Usage:
-  cypherstorm protect [flags]
-
-Flags:
-  --compression-algo string   choose the compression algorithm (optional) (default "gzip")
-  --encryption-algo string    choose the encryption algorithm (optional) (default "aes-256-gcm")
-  -h, --help                      help for protect
-  --input-path string         input path of the files to process
-  --key-file-path string      file containing the password to encrypt the files with (optional)
-  --output-path string        choose where you want the processed file to output to
-  --password string           password to encrypt the files with (optional)
-
+```sh
+cypherstorm protect \
+  --input-path INPUT \
+  --output-path OUTPUT.cys \
+  [--compression gzip|zstd|lz4|bzip2|lzma] \
+  [--cipher aes-256-gcm|xchacha20poly1305] \
+  [--key-file KEY.bin | --password-stdin] \
+  [--overwrite]
 ```
 
-### Restore Command
+A file or symlink input is archived under its basename. A directory input contributes its contents without an extra wrapper directory. Existing protected output is rejected unless `--overwrite` is explicit. Publication is atomic, including no-replace enforcement when overwrite is disabled.
 
-```bash
-The "restore" command allows you to decompress and decrypt a specified file or directory.
-It provides options to choose the compression and encryption algorithms, ensuring the recovery of the original data.
+## Restore
 
-Available Compression Algorithms:
-  - gzip
-  - bzip2
-  - lz4
-  - lzma
-  - zstd
-
-Available Encryption Algorithms:
-  - aes-256-gcm
-  - xchacha20poly1305
-
-Usage:
-  cypherstorm restore [flags]
-
-Flags:
-  --compression-algo string   choose the compression algorithm (optional) (default "gzip")
-  --encryption-algo string    choose the encryption algorithm (optional) (default "aes-256-gcm")
-  -h, --help                      help for restore
-  --input-path string         input path of the files to process
-  --key-file-path string      file containing the password to encrypt the files with (optional)
-  --output-path string        choose where you want the processed file to output to
-  --password string           password to encrypt the files with (optional)
-
+```sh
+cypherstorm restore \
+  --input-path INPUT.cys \
+  --output-path NEW_DESTINATION \
+  [--key-file KEY.bin | --password-stdin]
 ```
 
-## 🔒 Security Features
+Restore never asks for a cipher or compression codec. It reads authenticated v1 metadata and selects both automatically. The destination must not exist. Restore does not merge into or overwrite directory trees; it extracts privately and publishes the complete tree only after decryption, decompression, archive validation, and metadata restoration succeed.
 
-Secure password-based key derivation using Argon2
-Authentication using modern AEAD ciphers
-Safe handling of sensitive data in memory
-Secure file wiping after operations
-Protection against timing attacks
+## Hash
+
+```sh
+cypherstorm hash --input-path INPUT [--algorithm sha256|sha384|sha512]
+```
+
+Hashing returns deterministic path/digest rows. Directory traversal hashes regular files in lexical order, skips symlinks, and rejects special filesystem nodes instead of opening FIFOs or devices.
+
+## Benchmark
+
+```sh
+cypherstorm benchmark \
+  --input-path INPUT \
+  --output-path benchmark.xlsx
+```
+
+Benchmark runs the deterministic cross product of all five codecs and both cipher suites. It returns complete successes and failures, prints a text summary, and atomically publishes an XLSX report. XLSX support is retained as a product feature despite its larger dependency graph; renderer errors are propagated.
+
+## Terminal interface
+
+The TUI provides Protect, Restore, Hash, Benchmark, and Help screens in a warm, minimal, conversation-oriented visual style. File, folder, destination, and raw-key locations are selected with an in-terminal filesystem browser; operation forms do not require typing paths. Compression, encryption, credential kind, and hash algorithm use pop-up dropdown menus. Passwords remain masked and protect requires confirmation.
+
+Choosing a destination folder derives the final output name:
+
+- protect: `<source-name>.cys`;
+- restore: `<container-name-without-.cys>-restored`;
+- benchmark: `benchmark.xlsx`.
+
+Core keys:
+
+```text
+Forms:      Tab/Shift+Tab move; Enter opens or continues
+Dropdowns:  Up/Down choose; Enter selects; Esc closes
+Browser:    Up/Down move; Right opens a folder; Enter selects
+Browser:    S selects the currently displayed folder
+Running:    Esc, Q, or Ctrl+C requests safe cancellation
+Home:       Esc or Ctrl+C quits
+```
+
+The TUI retains bounded/coalesced progress, operation IDs, asynchronous service commands, responsive resize handling, keyboard-only navigation, and cancellation that waits for staging cleanup. Color is supplemental; focus and status always have text markers.
+
+## Supported algorithms
+
+Compression, deterministic order:
+
+1. gzip
+2. zstd
+3. lz4
+4. bzip2
+5. lzma
+
+Encryption, deterministic order:
+
+1. aes-256-gcm
+2. xchacha20poly1305
+
+Hashing:
+
+1. sha256
+2. sha384
+3. sha512
+
+## Verification
+
+The repository includes focused tests for:
+
+- password and raw-key round trips;
+- both ciphers, every codec, record boundary sizes, single files, and directories;
+- wrong credentials, hostile KDF fields, tampered/reordered/duplicated/truncated records, final-record tampering, and trailing bytes;
+- archive traversal, symlink, Windows-ambiguous path, size, entry, depth, and metadata boundaries;
+- atomic no-replace publication, cancellation cleanup, and concurrent workspaces;
+- CLI password/raw-key round trips;
+- TUI model state, secret redaction, cancellation, resize behavior, and stale messages;
+- pseudo-terminal password/raw-key round trips, interactive default routing, non-TTY help, help bypass, and terminal restoration.
