@@ -23,7 +23,7 @@ func writeJSON(command *cobra.Command, operation string, result any) error {
 }
 
 func newInspectCommand(service Service, streams Streams) *cobra.Command {
-	var outputFormat, keyFile, savedCredential string
+	var keyFile, savedCredential string
 	var authenticate, passwordStdin bool
 	var identities []string
 	command := &cobra.Command{
@@ -31,7 +31,7 @@ func newInspectCommand(service Service, streams Streams) *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			var credential app.Credential
 			var err error
-			if authenticate && (len(identities) == 0 || keyFile != "" || savedCredential != "" || passwordStdin) {
+			if authenticate && needsSymmetricCredential(identities, keyFile, savedCredential, passwordStdin) {
 				credential, err = resolveCredentialChoice(command, service, streams, savedCredential, keyFile, passwordStdin, false)
 				if err != nil {
 					return err
@@ -43,7 +43,7 @@ func newInspectCommand(service Service, streams Streams) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if outputFormat == "json" {
+			if outputFormat(command) == "json" {
 				return writeJSON(command, "inspect", result)
 			}
 			argon := ""
@@ -61,17 +61,16 @@ func newInspectCommand(service Service, streams Streams) *cobra.Command {
 			return err
 		},
 	}
-	command.Flags().StringVar(&outputFormat, "output-format", "text", "output format: text or json")
-	command.Flags().BoolVar(&authenticate, "authenticate", false, "authenticate v2 and reveal private metadata")
+	command.Flags().BoolVar(&authenticate, "authenticate", false, "authenticate and reveal private metadata")
 	command.Flags().StringVar(&keyFile, "key-file", "", "raw-key file")
 	command.Flags().StringVar(&savedCredential, "credential", "", "saved credential name")
 	command.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read password from stdin")
-	command.Flags().StringSliceVar(&identities, "identity", nil, "v2 private identity file")
+	command.Flags().StringSliceVar(&identities, "identity", nil, "private X25519 identity file")
 	return command
 }
 
 func newVerifyCommand(service Service, streams Streams) *cobra.Command {
-	var keyFile, savedCredential, mode, outputFormat string
+	var keyFile, savedCredential, mode string
 	var passwordStdin bool
 	var identities []string
 	command := &cobra.Command{
@@ -79,7 +78,7 @@ func newVerifyCommand(service Service, streams Streams) *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			var credential app.Credential
 			var err error
-			if len(identities) == 0 || keyFile != "" || savedCredential != "" || passwordStdin {
+			if needsSymmetricCredential(identities, keyFile, savedCredential, passwordStdin) {
 				credential, err = resolveCredentialChoice(command, service, streams, savedCredential, keyFile, passwordStdin, false)
 				if err != nil {
 					return err
@@ -91,7 +90,7 @@ func newVerifyCommand(service Service, streams Streams) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if outputFormat == "json" {
+			if outputFormat(command) == "json" {
 				return writeJSON(command, "verify", result)
 			}
 			if result.ArchiveValidated {
@@ -106,14 +105,13 @@ func newVerifyCommand(service Service, streams Streams) *cobra.Command {
 	flags.StringVar(&keyFile, "key-file", "", "path to an exact 32-byte binary raw-key file")
 	flags.StringVar(&savedCredential, "credential", "", "saved OS-keychain credential name")
 	flags.BoolVar(&passwordStdin, "password-stdin", false, "read password from stdin instead of prompting")
-	flags.StringSliceVar(&identities, "identity", nil, "v2 private identity file")
+	flags.StringSliceVar(&identities, "identity", nil, "private X25519 identity file")
 	flags.StringVar(&mode, "mode", string(app.VerifyFull), "verification mode: quick or full")
-	flags.StringVar(&outputFormat, "output-format", "text", "output format: text or json")
 	return command
 }
 
 func newListCommand(service Service, streams Streams) *cobra.Command {
-	var keyFile, savedCredential, outputFormat, match string
+	var keyFile, savedCredential, match string
 	var passwordStdin, long, summaryOnly, filesOnly bool
 	var maxDepth int
 	var identities []string
@@ -122,7 +120,7 @@ func newListCommand(service Service, streams Streams) *cobra.Command {
 		RunE: func(command *cobra.Command, args []string) error {
 			var credential app.Credential
 			var err error
-			if len(identities) == 0 || keyFile != "" || savedCredential != "" || passwordStdin {
+			if needsSymmetricCredential(identities, keyFile, savedCredential, passwordStdin) {
 				credential, err = resolveCredentialChoice(command, service, streams, savedCredential, keyFile, passwordStdin, false)
 				if err != nil {
 					return err
@@ -134,7 +132,7 @@ func newListCommand(service Service, streams Streams) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if outputFormat == "json" {
+			if outputFormat(command) == "json" {
 				return writeJSON(command, "list", result)
 			}
 			if !summaryOnly {
@@ -162,13 +160,12 @@ func newListCommand(service Service, streams Streams) *cobra.Command {
 	flags.StringVar(&keyFile, "key-file", "", "path to an exact 32-byte binary raw-key file")
 	flags.StringVar(&savedCredential, "credential", "", "saved OS-keychain credential name")
 	flags.BoolVar(&passwordStdin, "password-stdin", false, "read password from stdin instead of prompting")
-	flags.StringSliceVar(&identities, "identity", nil, "v2 private identity file")
+	flags.StringSliceVar(&identities, "identity", nil, "private X25519 identity file")
 	flags.BoolVar(&long, "long", false, "show type, size, mode, and symlink targets")
 	flags.BoolVar(&summaryOnly, "summary", false, "show only the archive summary")
 	flags.BoolVar(&filesOnly, "files-only", false, "show regular files only")
 	flags.IntVar(&maxDepth, "max-depth", 0, "maximum displayed path depth (zero is unlimited)")
 	flags.StringVar(&match, "match", "", "display entries matching a portable glob")
-	flags.StringVar(&outputFormat, "output-format", "text", "output format: text or json")
 	return command
 }
 

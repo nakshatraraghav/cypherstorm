@@ -40,7 +40,7 @@ type Service interface {
 	IdentityFingerprint(context.Context, string) (app.IdentityResult, error)
 	Sign(context.Context, string, string, string, string) (app.SignatureResult, error)
 	SignatureInspect(context.Context, string) (app.SignatureResult, error)
-	SignatureVerify(context.Context, string, string) (app.SignatureResult, error)
+	SignatureVerify(context.Context, string, string, string) (app.SignatureResult, error)
 	Rekey(context.Context, app.RekeyRequest, app.EventSink) (app.RekeyResult, error)
 	IdentityQR(context.Context, string, string) (app.QRResult, error)
 	RecipientImportQR(context.Context, string, string) (app.QRResult, error)

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/nakshatraraghav/cypherstorm/internal/app"
-	"github.com/nakshatraraghav/cypherstorm/internal/kdf"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/kdf"
 )
 
 func cliTestService(t *testing.T) *app.Service {

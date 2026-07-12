@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/nakshatraraghav/cypherstorm/internal/app"
-	"github.com/nakshatraraghav/cypherstorm/internal/hashing"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/hashing"
 	"github.com/spf13/cobra"
 )
 

@@ -29,7 +29,7 @@ func newRestoreCommand(service Service, streams Streams) *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			var credential app.Credential
 			var err error
-			if len(options.identities) == 0 || options.keyFile != "" || options.credential != "" || options.passwordStdin {
+			if needsSymmetricCredential(options.identities, options.keyFile, options.credential, options.passwordStdin) {
 				credential, err = resolveCredentialChoice(command, service, streams, options.credential, options.keyFile, options.passwordStdin, false)
 				if err != nil {
 					return err
@@ -67,6 +67,6 @@ func newRestoreCommand(service Service, streams Streams) *cobra.Command {
 	flags.StringSliceVar(&options.excludes, "exclude", nil, "exclude entries matching a portable glob")
 	flags.StringSliceVar(&options.paths, "path", nil, "restore an exact path or directory subtree")
 	flags.StringVar(&options.conflict, "conflict", string(app.ConflictFail), "existing destination policy: fail, skip, rename, or overwrite")
-	flags.StringSliceVar(&options.identities, "identity", nil, "v2 private identity file")
+	flags.StringSliceVar(&options.identities, "identity", nil, "private X25519 identity file")
 	return command
 }

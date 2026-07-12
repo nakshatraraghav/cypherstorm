@@ -6,8 +6,6 @@ import (
 	"os"
 
 	"github.com/nakshatraraghav/cypherstorm/internal/app"
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
 	"github.com/spf13/cobra"
 	"github.com/spf13/cobra/doc"
 )
@@ -33,7 +31,7 @@ func newBatchCommand(service Service, streams Streams) *cobra.Command {
 		}
 		defer clearBytes(cred.Password)
 		defer clearBytes(cred.RawKey)
-		r, e := service.BatchProtect(cmd.Context(), app.BatchProtectRequest{Inputs: args, Destination: destination, Credential: cred, Cipher: crypto.AES256GCM, Codec: compress.CompressionGzip, ContinueOnError: continueOnError}, eventSink(cmd, "batch.protect"))
+		r, e := service.BatchProtect(cmd.Context(), app.BatchProtectRequest{Inputs: args, Destination: destination, Credential: cred, ContinueOnError: continueOnError}, eventSink(cmd, "batch.protect"))
 		if e != nil && !continueOnError {
 			return e
 		}

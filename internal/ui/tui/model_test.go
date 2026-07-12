@@ -84,17 +84,76 @@ func updateModel(t *testing.T, model Model, message tea.Msg) Model {
 	return result
 }
 
-func TestHomeNavigationReachesEveryForm(t *testing.T) {
-	want := []screen{screenProtect, screenRestore, screenInspect, screenVerify, screenList, screenHash, screenBenchmark, screenHelp}
-	for index, expected := range want {
-		model := NewModel(&fakeService{})
-		for range index {
-			model = updateModel(t, model, key("down"))
+func runCommand(t *testing.T, model Model, command tea.Cmd) Model {
+	t.Helper()
+	if command == nil {
+		return model
+	}
+	message := command()
+	if batch, ok := message.(tea.BatchMsg); ok {
+		for _, nested := range batch {
+			model = runCommand(t, model, nested)
 		}
-		model = updateModel(t, model, key("enter"))
-		if model.screen != expected {
-			t.Fatalf("menu %d reached screen %d, want %d", index, model.screen, expected)
+		return model
+	}
+	return updateModel(t, model, message)
+}
+
+func TestHomeNavigationGroupsActionsIntoSubmenus(t *testing.T) {
+	tests := []struct {
+		name         string
+		homeIndex    int
+		sectionIndex int
+		want         screen
+	}{
+		{name: "protect", homeIndex: 0, sectionIndex: 0, want: screenProtect},
+		{name: "restore", homeIndex: 0, sectionIndex: 1, want: screenRestore},
+		{name: "inspect", homeIndex: 1, sectionIndex: 0, want: screenInspect},
+		{name: "verify", homeIndex: 1, sectionIndex: 1, want: screenVerify},
+		{name: "browse", homeIndex: 1, sectionIndex: 2, want: screenList},
+		{name: "hash", homeIndex: 2, sectionIndex: 0, want: screenHash},
+		{name: "benchmark", homeIndex: 2, sectionIndex: 1, want: screenBenchmark},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := NewModel(&fakeService{})
+			for range test.homeIndex {
+				model = updateModel(t, model, key("down"))
+			}
+			model = updateModel(t, model, key("enter"))
+			if model.screen != screenSection {
+				t.Fatalf("home item %d reached screen %d, want section menu", test.homeIndex, model.screen)
+			}
+			for range test.sectionIndex {
+				model = updateModel(t, model, key("down"))
+			}
+			model = updateModel(t, model, key("enter"))
+			if model.screen != test.want {
+				t.Fatalf("submenu item %d reached screen %d, want %d", test.sectionIndex, model.screen, test.want)
+			}
+		})
+	}
+
+	model := NewModel(&fakeService{})
+	for range 3 {
+		model = updateModel(t, model, key("down"))
+	}
+	model = updateModel(t, model, key("enter"))
+	if model.screen != screenHelp {
+		t.Fatalf("help item reached screen %d", model.screen)
+	}
+}
+
+func TestHomeViewPresentsLogicalWorkspaces(t *testing.T) {
+	model := NewModel(&fakeService{})
+	view := model.View()
+	for _, label := range []string{"Secure files", "Inspect & validate", "Tools & reports", "Help & about"} {
+		if !strings.Contains(view, label) {
+			t.Fatalf("home view missing workspace %q:\n%s", label, view)
 		}
+	}
+	if strings.Contains(view, "Protect files") {
+		t.Fatalf("home view leaked a nested action:\n%s", view)
 	}
 }
 
@@ -148,6 +207,76 @@ func TestPickerSelectsFilesAndCurrentFoldersWithoutTypingPaths(t *testing.T) {
 	}
 	if got, want := model.restore.outputPreview(), filepath.Join(root, "sample-restored"); got != want {
 		t.Fatalf("derived restore destination = %q, want %q", got, want)
+	}
+}
+
+func TestPickerFuzzyFindsAndSelectsFiles(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "release-notes.txt")
+	if err := os.WriteFile(target, []byte("notes"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "receipt.txt"), []byte("other"), 0o600); err != nil {
+		t.Fatalf("write distractor: %v", err)
+	}
+
+	model := NewModel(&fakeService{})
+	model.protect.inputPath = target
+	model.screen = screenProtect
+	updated, command := model.Update(key("enter"))
+	model = updated.(Model)
+	model = runCommand(t, model, command)
+	if model.picker == nil || !model.picker.ready {
+		t.Fatal("source picker did not become ready")
+	}
+
+	model = updateModel(t, model, key("/"))
+	if !model.picker.filtering || !model.picker.query.Focused() {
+		t.Fatal("slash did not focus fuzzy find")
+	}
+	updated, command = model.Update(key("release"))
+	model = updated.(Model)
+	model = runCommand(t, model, command)
+	if len(model.picker.matches) != 1 || model.picker.matches[0].name != "release-notes.txt" {
+		t.Fatalf("fzf matches = %#v", model.picker.matches)
+	}
+	if view := model.View(); !strings.Contains(view, "FUZZY FIND") || !strings.Contains(view, "release-notes.txt") {
+		t.Fatalf("fuzzy picker view missing query results:\n%s", view)
+	}
+
+	model = updateModel(t, model, key("enter"))
+	if model.screen != screenProtect || model.protect.inputPath != target {
+		t.Fatalf("fuzzy selection path=%q screen=%d", model.protect.inputPath, model.screen)
+	}
+}
+
+func TestPickerFuzzyEscapeClearsBeforeClosing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "release-notes.txt"), []byte("notes"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	model := NewModel(&fakeService{})
+	model.protect.inputPath = filepath.Join(root, "release-notes.txt")
+	model.screen = screenProtect
+	updated, command := model.Update(key("enter"))
+	model = updated.(Model)
+	model = runCommand(t, model, command)
+	model = updateModel(t, model, key("/"))
+	updated, command = model.Update(key("release"))
+	model = updated.(Model)
+	model = runCommand(t, model, command)
+
+	model = updateModel(t, model, key("esc"))
+	if !model.picker.filtering || model.picker.query.Value() != "" {
+		t.Fatal("first escape did not clear the fuzzy query")
+	}
+	model = updateModel(t, model, key("esc"))
+	if model.picker == nil || model.picker.filtering {
+		t.Fatal("second escape did not leave fuzzy mode")
+	}
+	model = updateModel(t, model, key("esc"))
+	if model.screen != screenProtect || model.picker != nil {
+		t.Fatal("third escape did not close picker")
 	}
 }
 
@@ -328,6 +457,18 @@ func TestCancellationRunsOnceAndStaleMessagesAreIgnored(t *testing.T) {
 	}
 }
 
+func TestCompletionReleasesOperationCancel(t *testing.T) {
+	model := NewModel(&fakeService{})
+	model.screen = screenRunning
+	model.operationID = 13
+	cancelCount := 0
+	model.cancel = func() { cancelCount++ }
+	model = updateModel(t, model, operationDoneMsg{operationID: 13, kind: operationProtect, value: app.ProtectResult{OutputPath: "done.cys"}})
+	if cancelCount != 1 || model.cancel != nil || model.cancelRequested {
+		t.Fatalf("completion cancel state: count=%d cancel=%v requested=%t", cancelCount, model.cancel, model.cancelRequested)
+	}
+}
+
 func TestResizePreservesFieldsAndShowsMinimumSizeMessage(t *testing.T) {
 	model := NewModel(&fakeService{})
 	model.screen = screenProtect
@@ -360,5 +501,49 @@ func TestSecretsAreAbsentFromViewsAndDebugFormatting(t *testing.T) {
 	model = updateModel(t, model, key("esc"))
 	if model.protect.password.Value() != "" || model.protect.confirmation.Value() != "" {
 		t.Fatal("leaving form did not clear secret buffers")
+	}
+}
+
+func TestProgressBarRendersKnownAndUnknownProgress(t *testing.T) {
+	tests := []struct {
+		name    string
+		current int64
+		total   int64
+		width   int
+		want    int
+	}{
+		{name: "quarter", current: 1, total: 4, width: 32, want: 8},
+		{name: "complete", current: 9, total: 9, width: 32, want: 32},
+		{name: "clamped", current: 10, total: 9, width: 32, want: 32},
+		{name: "unknown", current: 1, total: 0, width: 32, want: 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := progressFillWidth(test.current, test.total, test.width); got != test.want {
+				t.Fatalf("progressFillWidth(%d, %d, %d) = %d, want %d", test.current, test.total, test.width, got, test.want)
+			}
+		})
+	}
+
+	style := defaultStyles()
+	known := renderProgress(app.Event{Current: 1, Total: 4}, style)
+	if !strings.Contains(known, "25%") || !strings.Contains(known, "1 / 4") {
+		t.Fatalf("determinate progress missing percentage or totals: %q", known)
+	}
+	unknown := renderProgress(app.Event{Phase: app.PhaseEncrypting}, style)
+	if !strings.Contains(unknown, "progress is not measurable") {
+		t.Fatalf("indeterminate progress missing explanation: %q", unknown)
+	}
+}
+
+func TestRunningViewDisplaysProgressBar(t *testing.T) {
+	model := NewModel(&fakeService{})
+	model.screen = screenRunning
+	model.progress = app.Event{Phase: app.PhaseBenchmarking, Current: 1, Total: 2}
+	view := model.View()
+	for _, value := range []string{"BENCHMARKING", "50%", "1 / 2"} {
+		if !strings.Contains(view, value) {
+			t.Fatalf("running view missing %q:\n%s", value, view)
+		}
 	}
 }

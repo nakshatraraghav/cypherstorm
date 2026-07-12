@@ -7,10 +7,11 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/filepicker"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
-	"github.com/nakshatraraghav/cypherstorm/internal/hashing"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/hashing"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
 )
 
 type pickerState struct {
@@ -21,6 +22,13 @@ type pickerState struct {
 	title        string
 	directories  bool
 	ready        bool
+
+	filtering  bool
+	query      textinput.Model
+	generation uint64
+	searching  bool
+	matches    []fuzzyMatch
+	matchIndex int
 }
 
 type dropdownState struct {
@@ -65,6 +73,7 @@ func (m *Model) openPicker(kind formKind, slot slotKind) tea.Cmd {
 	}
 	picker.CurrentDirectory = pickerStartDirectory(current)
 	applyPickerStyles(&picker, m.styles)
+	query := newFuzzyInput(m.styles)
 	m.picker = &pickerState{
 		model:        picker,
 		form:         kind,
@@ -72,6 +81,10 @@ func (m *Model) openPicker(kind formKind, slot slotKind) tea.Cmd {
 		returnScreen: screenForForm(kind),
 		title:        title,
 		directories:  picker.DirAllowed,
+		// Choosing the current destination does not depend on the asynchronous
+		// listing; keep file-source pickers gated until their entries arrive.
+		ready: picker.DirAllowed,
+		query: query,
 	}
 	m.validation = ""
 	m.screen = screenPicker
@@ -109,12 +122,43 @@ func applyPickerStyles(picker *filepicker.Model, style styles) {
 	picker.Styles.DisabledSelected = style.muted
 }
 
+func newFuzzyInput(style styles) textinput.Model {
+	input := textinput.New()
+	input.Prompt = "Find  "
+	input.Placeholder = "type to fuzzy-filter"
+	input.CharLimit = 128
+	input.Width = 42
+	input.PromptStyle = style.accent
+	input.TextStyle = style.path
+	input.PlaceholderStyle = style.muted
+	return input
+}
+
 func (m Model) updatePicker(message tea.Msg) (tea.Model, tea.Cmd) {
 	if m.picker == nil {
 		m.screen = screenHome
 		return m, nil
 	}
+	if matches, ok := message.(fuzzyMatchesMsg); ok {
+		return m.applyFuzzyMatches(matches)
+	}
 	if key, ok := message.(tea.KeyMsg); ok {
+		if m.picker.filtering {
+			return m.updateFuzzyPicker(message)
+		}
+		if m.picker.ready && strings.HasPrefix(key.String(), "/") {
+			m.picker.filtering = true
+			m.picker.query.SetValue(strings.TrimPrefix(key.String(), "/"))
+			m.picker.matches = nil
+			m.picker.matchIndex = 0
+			m.picker.searching = false
+			focus := m.picker.query.Focus()
+			search := m.refreshFuzzyMatches()
+			if search == nil {
+				return m, focus
+			}
+			return m, tea.Batch(focus, search)
+		}
 		if key.String() == "esc" {
 			m.screen = m.picker.returnScreen
 			m.picker = nil
@@ -134,8 +178,125 @@ func (m Model) updatePicker(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.picker.ready = true
 	}
 
+	previousDirectory := m.picker.model.CurrentDirectory
 	picker, command := m.picker.model.Update(message)
 	m.picker.model = picker
+	if picker.CurrentDirectory != previousDirectory {
+		m.picker.ready = false
+	}
+	return m.commitPickerUpdate(message, command)
+}
+
+func (m Model) updateFuzzyPicker(message tea.Msg) (tea.Model, tea.Cmd) {
+	key, isKey := message.(tea.KeyMsg)
+	if isKey {
+		switch key.String() {
+		case "esc":
+			if m.picker.query.Value() != "" {
+				m.picker.query.SetValue("")
+				m.picker.matches = nil
+				m.picker.matchIndex = 0
+				m.picker.searching = false
+				m.picker.generation++
+				return m, nil
+			}
+			m.picker.filtering = false
+			m.picker.query.Blur()
+			m.picker.matches = nil
+			m.picker.matchIndex = 0
+			return m, nil
+		case "up", "ctrl+p":
+			if len(m.picker.matches) > 0 {
+				m.picker.matchIndex = cycle(m.picker.matchIndex, -1, len(m.picker.matches))
+			}
+			return m, nil
+		case "down", "ctrl+n":
+			if len(m.picker.matches) > 0 {
+				m.picker.matchIndex = cycle(m.picker.matchIndex, 1, len(m.picker.matches))
+			}
+			return m, nil
+		case "enter":
+			if m.picker.searching || len(m.picker.matches) == 0 {
+				return m, nil
+			}
+			return m.activateFuzzyMatch(m.picker.matches[m.picker.matchIndex])
+		}
+	}
+	before := m.picker.query.Value()
+	query, command := m.picker.query.Update(message)
+	m.picker.query = query
+	if query.Value() == before {
+		return m, command
+	}
+	search := m.refreshFuzzyMatches()
+	if command == nil {
+		return m, search
+	}
+	if search == nil {
+		return m, command
+	}
+	return m, tea.Batch(command, search)
+}
+
+func (m Model) refreshFuzzyMatches() tea.Cmd {
+	m.picker.generation++
+	m.picker.matches = nil
+	m.picker.matchIndex = 0
+	query := m.picker.query.Value()
+	m.picker.searching = strings.TrimSpace(query) != ""
+	if !m.picker.searching {
+		return nil
+	}
+	return fuzzySearch(
+		m.picker.generation,
+		m.picker.model.CurrentDirectory,
+		query,
+		m.picker.model.ShowHidden,
+	)
+}
+
+func (m Model) applyFuzzyMatches(message fuzzyMatchesMsg) (tea.Model, tea.Cmd) {
+	if m.picker == nil ||
+		!m.picker.filtering ||
+		message.generation != m.picker.generation ||
+		message.directory != m.picker.model.CurrentDirectory ||
+		message.query != m.picker.query.Value() {
+		return m, nil
+	}
+	m.picker.searching = false
+	if message.err != nil {
+		m.validation = fmt.Sprintf("find files: %v", message.err)
+		m.picker.matches = nil
+		return m, nil
+	}
+	m.picker.matches = message.matches
+	m.picker.matchIndex = 0
+	return m, nil
+}
+
+func (m Model) activateFuzzyMatch(match fuzzyMatch) (tea.Model, tea.Cmd) {
+	m.picker.filtering = false
+	m.picker.query.Blur()
+	m.picker.matches = nil
+	m.picker.matchIndex = 0
+
+	top := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("g")}
+	picker, _ := m.picker.model.Update(top)
+	for index := 0; index < match.index; index++ {
+		picker, _ = picker.Update(tea.KeyMsg{Type: tea.KeyDown})
+	}
+	previousDirectory := picker.CurrentDirectory
+	enter := tea.KeyMsg{Type: tea.KeyEnter}
+	picker, command := picker.Update(enter)
+	m.picker.model = picker
+	if picker.CurrentDirectory != previousDirectory {
+		m.picker.ready = false
+	}
+	return m.commitPickerUpdate(enter, command)
+}
+
+func (m Model) commitPickerUpdate(message tea.Msg, command tea.Cmd) (tea.Model, tea.Cmd) {
+	picker := m.picker.model
 	if selected, path := picker.DidSelectFile(message); selected {
 		m.formForKind(m.picker.form).setPath(m.picker.slot, path)
 		m.screen = m.picker.returnScreen
@@ -213,36 +374,80 @@ func (m Model) pickerView() string {
 		return ""
 	}
 	lines := []string{
-		m.styles.brand.Render("CYPHERSTORM"),
-		m.styles.title.Render(m.picker.title),
+		m.styles.eyebrow.Render("FILE PICKER"),
+		m.styles.hero.Render(m.picker.title),
 	}
 	if !m.picker.ready {
-		lines = append(lines, "", m.styles.muted.Render("Loading folder…"), "", m.styles.help.Render("esc cancels"))
-		return m.styles.modal.Render(strings.Join(lines, "\n"))
+		lines = append(lines, "", m.styles.muted.Render("Loading folder…"), "", m.styles.help.Render("Esc cancels"))
+		return m.shell(strings.Join(lines, "\n"))
 	}
 	lines = append(lines,
-		m.styles.success.Render("Ready — "+m.picker.title),
-		m.styles.muted.Render(m.picker.model.CurrentDirectory),
-		"",
-		m.picker.model.View(),
+		m.styles.success.Render("READY"),
+		m.styles.label.Render("CURRENT LOCATION"),
+		m.styles.path.Render(m.picker.model.CurrentDirectory),
 		"",
 	)
-	if m.picker.directories {
-		lines = append(lines, m.styles.help.Render("enter selects  •  right opens folder  •  s selects this folder  •  esc cancels"))
+	if m.picker.filtering {
+		lines = append(lines,
+			m.styles.label.Render("FUZZY FIND"),
+			m.picker.query.View(),
+			"",
+			m.fuzzyMatchesView(),
+			"",
+			m.styles.help.Render("↑/↓ result  •  Enter opens/selects  •  Esc clears or closes find"),
+		)
 	} else {
-		lines = append(lines, m.styles.help.Render("enter selects  •  right opens folder  •  esc cancels"))
+		lines = append(lines, m.picker.model.View(), "")
+		if m.picker.directories {
+			lines = append(lines, m.styles.help.Render("/ find  •  Enter selects  •  Right opens  •  S chooses this folder  •  Esc cancels"))
+		} else {
+			lines = append(lines, m.styles.help.Render("/ find  •  Enter selects  •  Right opens  •  Esc cancels"))
+		}
 	}
 	if m.validation != "" {
 		lines = append(lines, "", m.styles.error.Render(m.validation))
 	}
-	return m.styles.modal.Render(strings.Join(lines, "\n"))
+	return m.shell(strings.Join(lines, "\n"))
+}
+
+func (m Model) fuzzyMatchesView() string {
+	if m.picker.query.Value() == "" {
+		return m.styles.muted.Render("Type a filename or folder name to filter this directory.")
+	}
+	if m.picker.searching {
+		return m.styles.muted.Render("Finding matches with fzf…")
+	}
+	if len(m.picker.matches) == 0 {
+		return m.styles.muted.Render("No matching entries.")
+	}
+	limit := min(len(m.picker.matches), max(4, m.height-16))
+	lines := make([]string, 0, limit+1)
+	for index, match := range m.picker.matches[:limit] {
+		name := match.name
+		if match.isDir {
+			name += "/"
+		}
+		if index == m.picker.matchIndex {
+			lines = append(lines, m.styles.accent.Render("› ")+m.styles.selectBox.Render(name))
+			continue
+		}
+		lines = append(lines, "  "+m.styles.path.Render(name))
+	}
+	if len(m.picker.matches) > limit {
+		lines = append(lines, m.styles.muted.Render(fmt.Sprintf("%d more matches", len(m.picker.matches)-limit)))
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) dropdownView() string {
 	if m.dropdown == nil {
 		return ""
 	}
-	lines := []string{m.styles.brand.Render("CYPHERSTORM"), m.styles.title.Render(m.dropdown.title), ""}
+	lines := []string{
+		m.styles.eyebrow.Render("SELECT OPTION"),
+		m.styles.hero.Render(m.dropdown.title),
+		"",
+	}
 	for index, option := range m.dropdown.options {
 		marker := "  "
 		value := option
@@ -252,8 +457,8 @@ func (m Model) dropdownView() string {
 		}
 		lines = append(lines, marker+value)
 	}
-	lines = append(lines, "", m.styles.help.Render("up/down choose  •  enter selects  •  esc cancels"))
-	return m.styles.modal.Render(strings.Join(lines, "\n"))
+	lines = append(lines, "", m.styles.help.Render("↑/↓ choose  •  Enter selects  •  Esc cancels"))
+	return m.shell(strings.Join(lines, "\n"))
 }
 
 func (m *Model) formForKind(kind formKind) *operationForm {

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -72,14 +71,19 @@ func newSignatureCommand(service Service) *cobra.Command {
 		}
 		return writeJSON(cmd, "signature.inspect", r)
 	}}
+	var trustedSigner string
 	verify := &cobra.Command{Use: "verify ARCHIVE SIGNATURE", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-		r, e := service.SignatureVerify(cmd.Context(), args[0], args[1])
+		r, e := service.SignatureVerify(cmd.Context(), args[0], args[1], trustedSigner)
 		if e != nil {
 			return e
 		}
-		return writeResult(cmd, "signature.verify", r, func(w interfaceWriter) error { _, e = fmt.Fprintln(w, "valid signature"); return e })
+		return writeResult(cmd, "signature.verify", r, func(w interfaceWriter) error {
+			_, e = fmt.Fprintf(w, "valid signature from %s\n", r.SignerFingerprint)
+			return e
+		})
 	}}
+	verify.Flags().StringVar(&trustedSigner, "signer", "", "trusted signing public identity path or fingerprint")
+	_ = verify.MarkFlagRequired("signer")
 	root.AddCommand(inspect, verify)
 	return root
 }
-func cleanFingerprint(value string) string { return strings.TrimSpace(value) }

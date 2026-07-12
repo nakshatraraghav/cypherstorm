@@ -5,23 +5,24 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nakshatraraghav/cypherstorm/internal/app"
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
-	"github.com/nakshatraraghav/cypherstorm/internal/fsutil"
-	"github.com/nakshatraraghav/cypherstorm/internal/hashing"
-	"github.com/nakshatraraghav/cypherstorm/internal/kdf"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/keymanage"
 	"github.com/nakshatraraghav/cypherstorm/internal/report"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/hashing"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/wipe"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/fsutil"
 )
 
 type screen uint8
 
 const (
 	screenHome screen = iota
+	screenSection
 	screenProtect
 	screenRestore
 	screenHash
@@ -57,17 +58,19 @@ type Model struct {
 	width   int
 	height  int
 
-	homeIndex   int
-	protect     operationForm
-	restore     operationForm
-	hash        operationForm
-	benchmark   operationForm
-	inspect     operationForm
-	verify      operationForm
-	list        operationForm
-	picker      *pickerState
-	dropdown    *dropdownState
-	baseContext context.Context
+	homeIndex    int
+	section      menuSection
+	sectionIndex int
+	protect      operationForm
+	restore      operationForm
+	hash         operationForm
+	benchmark    operationForm
+	inspect      operationForm
+	verify       operationForm
+	list         operationForm
+	picker       *pickerState
+	dropdown     *dropdownState
+	baseContext  context.Context
 
 	pendingKind operationKind
 	pending     any
@@ -111,26 +114,39 @@ func (m Model) String() string {
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+	if next, command, handled := m.handleOperationMessage(message); handled {
+		return next, command
+	}
+	if next, command, handled := m.handleGlobalInput(message); handled {
+		return next, command
+	}
+	return m.updateScreen(message)
+}
+
+func (m Model) handleOperationMessage(message tea.Msg) (Model, tea.Cmd, bool) {
 	switch message := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = message.Width, message.Height
 		if m.picker != nil {
 			m.picker.model.SetHeight(max(5, m.height-12))
 		}
-		return m, nil
+		return m, nil, true
 	case progressMsg:
 		if m.screen != screenRunning || message.operationID != m.operationID {
-			return m, nil
+			return m, nil, true
 		}
 		m.progress = message.event
-		return m, waitProgress(message.operationID, message.events)
+		return m, waitProgress(message.operationID, message.events), true
 	case progressClosedMsg:
-		return m, nil
+		return m, nil, true
 	case operationDoneMsg:
 		if message.operationID != m.operationID {
-			return m, nil
+			return m, nil, true
 		}
-		m.cancel = nil
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
 		m.cancelRequested = false
 		if message.err != nil {
 			if message.kind == operationBenchmark {
@@ -139,60 +155,70 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 					m.resultTitle = "Benchmark completed with errors"
 					m.resultLines = append([]string{message.err.Error()}, m.resultLines...)
 					m.screen = screenResult
-					return m, nil
+					return m, nil, true
 				}
 			}
 			m.lastError = message.err
 			m.screen = screenError
-			return m, nil
+			return m, nil, true
 		}
 		m.setResult(message)
 		m.screen = screenResult
-		return m, nil
+		return m, nil, true
+	default:
+		return m, nil, false
 	}
+}
 
+func (m Model) handleGlobalInput(message tea.Msg) (Model, tea.Cmd, bool) {
 	key, isKey := message.(tea.KeyMsg)
 	if isKey && m.screen == screenRunning && key.String() == "q" {
 		m.requestCancel()
-		return m, nil
+		return m, nil, true
 	}
 	if isKey && key.String() == "ctrl+c" {
 		if m.screen == screenRunning {
 			m.requestCancel()
-			return m, nil
+			return m, nil, true
 		}
 		m.clearSecrets()
-		return m, tea.Quit
+		return m, tea.Quit, true
 	}
 	if m.screen == screenPicker {
-		return m.updatePicker(message)
+		next, command := m.updatePicker(message)
+		return next.(Model), command, true
 	}
 	if m.screen == screenDropdown {
-		return m.updateDropdown(message)
+		next, command := m.updateDropdown(message)
+		return next.(Model), command, true
 	}
-	if isKey && key.String() == "esc" {
-		switch m.screen {
-		case screenRunning:
-			m.requestCancel()
-			return m, nil
-		case screenHome:
-			m.clearSecrets()
-			return m, tea.Quit
-		case screenConfirm:
-			m.screen = screenForOperation(m.pendingKind)
-			m.discardPending()
-			return m, nil
-		default:
-			m.clearSecrets()
-			m.screen = screenHome
-			m.validation = ""
-			return m, nil
-		}
+	if !isKey || key.String() != "esc" {
+		return m, nil, false
 	}
+	switch m.screen {
+	case screenRunning:
+		m.requestCancel()
+	case screenHome:
+		m.clearSecrets()
+		return m, tea.Quit, true
+	case screenConfirm:
+		m.screen = screenForOperation(m.pendingKind)
+		m.discardPending()
+	default:
+		m.clearSecrets()
+		m.screen = screenHome
+		m.validation = ""
+	}
+	return m, nil, true
+}
 
+func (m Model) updateScreen(message tea.Msg) (tea.Model, tea.Cmd) {
+	key, isKey := message.(tea.KeyMsg)
 	switch m.screen {
 	case screenHome:
 		return m.updateHome(message)
+	case screenSection:
+		return m.updateSection(message)
 	case screenProtect:
 		command, action := m.protect.update(message)
 		return m.handleFormAction(formProtect, action, command)
@@ -250,32 +276,38 @@ func (m Model) updateHome(message tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
-	const menuCount = 8
+	items := homeMenu()
 	switch key.String() {
 	case "up", "k":
-		m.homeIndex = cycle(m.homeIndex, -1, menuCount)
+		m.homeIndex = cycle(m.homeIndex, -1, len(items))
 	case "down", "j", "tab":
-		m.homeIndex = cycle(m.homeIndex, 1, menuCount)
+		m.homeIndex = cycle(m.homeIndex, 1, len(items))
 	case "enter":
 		m.validation = ""
-		switch m.homeIndex {
-		case 0:
-			m.screen = screenProtect
-		case 1:
-			m.screen = screenRestore
-		case 2:
-			m.screen = screenInspect
-		case 3:
-			m.screen = screenVerify
-		case 4:
-			m.screen = screenList
-		case 5:
-			m.screen = screenHash
-		case 6:
-			m.screen = screenBenchmark
-		case 7:
-			m.screen = screenHelp
+		selected := items[m.homeIndex]
+		if selected.target == screenSection {
+			m.section = sectionForHomeIndex(m.homeIndex)
+			m.sectionIndex = 0
 		}
+		m.screen = selected.target
+	}
+	return m, nil
+}
+
+func (m Model) updateSection(message tea.Msg) (tea.Model, tea.Cmd) {
+	key, ok := message.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	items := sectionInfo(m.section).items
+	switch key.String() {
+	case "up", "k":
+		m.sectionIndex = cycle(m.sectionIndex, -1, len(items))
+	case "down", "j", "tab":
+		m.sectionIndex = cycle(m.sectionIndex, 1, len(items))
+	case "enter":
+		m.validation = ""
+		m.screen = items[m.sectionIndex].target
 	}
 	return m, nil
 }
@@ -431,23 +463,9 @@ func formCredential(form *operationForm, confirm bool) (app.Credential, error) {
 	if keyPath == "" {
 		return app.Credential{}, fmt.Errorf("key-file path is required")
 	}
-	info, err := os.Lstat(keyPath)
-	if err != nil {
-		return app.Credential{}, fmt.Errorf("key file: %w", err)
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return app.Credential{}, fmt.Errorf("key file must be a regular file, not a symlink")
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return app.Credential{}, fmt.Errorf("key-file permissions must be 0600 or stricter")
-	}
-	key, err := os.ReadFile(keyPath)
+	key, err := keymanage.Load(keyPath)
 	if err != nil {
 		return app.Credential{}, fmt.Errorf("read key file: %w", err)
-	}
-	if len(key) != kdf.MasterKeySize {
-		clearSecret(key)
-		return app.Credential{}, fmt.Errorf("key file must contain exactly %d binary bytes", kdf.MasterKeySize)
 	}
 	return app.Credential{Kind: app.CredentialRawKey, RawKey: key}, nil
 }
@@ -605,9 +623,7 @@ func clearCredential(credential *app.Credential) {
 }
 
 func clearSecret(value []byte) {
-	for index := range value {
-		value[index] = 0
-	}
+	wipe.Bytes(value)
 }
 
 func screenForOperation(kind operationKind) screen {
@@ -690,6 +706,8 @@ func (m Model) View() string {
 	switch m.screen {
 	case screenHome:
 		body = m.homeView()
+	case screenSection:
+		body = m.sectionView()
 	case screenProtect:
 		body = m.formView(m.protect)
 	case screenRestore:
@@ -709,40 +727,54 @@ func (m Model) View() string {
 	case screenConfirm:
 		body = m.confirmView()
 	case screenRunning:
-		status := fmt.Sprintf("Phase: %s", m.progress.Phase)
-		if m.progress.Detail != "" {
-			status += "\n" + m.progress.Detail
-		}
-		if m.cancelRequested {
-			status += "\nCancellation requested; waiting for cleanup."
-		}
-		body = m.styles.title.Render("Working") + "\n\n" + status + "\n\n" + m.styles.help.Render("Esc/Ctrl+C/Q: cancel safely")
+		body = m.runningView()
 	case screenResult:
 		body = m.resultView()
 	case screenError:
-		body = m.styles.error.Render("Operation failed") + "\n\n" + fmt.Sprint(m.lastError) + "\n\n" + m.styles.help.Render("Enter: return to form  Esc: home")
+		body = m.errorView()
 	}
-	return m.styles.panel.Render(body)
+	return m.shell(body)
 }
 
 func (m Model) homeView() string {
-	items := []string{"Protect", "Restore", "Inspect", "Verify", "Browse archive", "Hash", "Benchmark", "Help / About"}
+	items := homeMenu()
 	lines := []string{
-		m.styles.brand.Render("CYPHERSTORM"),
-		m.styles.muted.Render("Private files, protected locally"),
+		m.styles.hero.Render("CypherStorm"),
+		m.styles.muted.Render("Nothing personal leaves the room."),
 		"",
 	}
 	for index, item := range items {
-		prefix := "  "
-		value := item
-		if index == m.homeIndex {
-			prefix = m.styles.accent.Render("› ")
-			value = m.styles.selectBox.Render(item)
-		}
-		lines = append(lines, prefix+value)
+		lines = append(lines, m.menuCard(item, index == m.homeIndex, 58))
 	}
-	lines = append(lines, "", m.styles.help.Render("up/down move  •  enter opens  •  esc quits"))
 	return strings.Join(lines, "\n")
+}
+
+func (m Model) sectionView() string {
+	section := sectionInfo(m.section)
+	lines := []string{
+		m.styles.eyebrow.Render(section.tag),
+		m.styles.hero.Render(section.title),
+		m.styles.muted.Render(section.description),
+		"",
+	}
+	for index, item := range section.items {
+		lines = append(lines, m.menuCard(item, index == m.sectionIndex, 58))
+	}
+	lines = append(lines, "", m.styles.help.Render("↑/↓ choose  •  Enter open  •  Esc home"))
+	return strings.Join(lines, "\n")
+}
+
+func (m Model) menuCard(item menuItem, selected bool, maxWidth int) string {
+	width := maxWidth
+	if m.width > 0 {
+		width = min(maxWidth, max(36, m.width-12))
+	}
+	tag := m.styles.tag.Render(item.tag)
+	content := m.styles.cardTitle.Render(item.title) + "  " + tag + "\n" + m.styles.cardDescription.Render(item.description)
+	if selected {
+		return m.styles.selectedCard.Width(width).Render("› " + content)
+	}
+	return m.styles.card.Width(width).Render("  " + content)
 }
 
 func (m Model) formView(form operationForm) string {
@@ -753,37 +785,102 @@ func (m Model) formView(form operationForm) string {
 	return view
 }
 
+func (m Model) runningView() string {
+	status := m.styles.label.Render("PHASE  ") + m.styles.accent.Render(strings.ToUpper(string(m.progress.Phase)))
+	if m.progress.Detail != "" {
+		status += "\n" + m.progress.Detail
+	}
+	if m.cancelRequested {
+		status += "\n\n" + m.styles.warning.Render("Cancellation requested. Waiting for secure cleanup.")
+	}
+	return strings.Join([]string{
+		m.styles.eyebrow.Render("OPERATION IN PROGRESS"),
+		m.styles.hero.Render("Working safely"),
+		m.styles.muted.Render("The destination is not published until the operation completes."),
+		"",
+		status,
+		"",
+		renderProgress(m.progress, m.styles),
+		"",
+		m.styles.help.Render("Esc, Ctrl+C, or Q requests safe cancellation"),
+	}, "\n")
+}
+
+func (m Model) errorView() string {
+	return strings.Join([]string{
+		m.styles.eyebrow.Render("OPERATION STOPPED"),
+		m.styles.error.Render("No output was published"),
+		"",
+		fmt.Sprint(m.lastError),
+		"",
+		m.styles.help.Render("Enter returns to the form  •  Esc returns home"),
+	}, "\n")
+}
+
 func (m Model) confirmView() string {
 	var summary string
 	switch request := m.pending.(type) {
 	case app.ProtectRequest:
-		summary = fmt.Sprintf("Protect\nInput: %s\nOutput: %s\nCompression: %s\nCipher: %s\nOverwrite: %t", request.InputPath, request.OutputPath, request.Codec, request.Cipher, request.Overwrite)
+		summary = fmt.Sprintf("Input        %s\nOutput       %s\nCompression  %s\nEncryption   %s\nOverwrite    %t", request.InputPath, request.OutputPath, request.Codec, request.Cipher, request.Overwrite)
 	case app.RestoreRequest:
-		summary = fmt.Sprintf("Restore\nInput: %s\nDestination: %s", request.InputPath, request.OutputPath)
+		summary = fmt.Sprintf("Archive      %s\nDestination  %s", request.InputPath, request.OutputPath)
 	case app.HashRequest:
-		summary = fmt.Sprintf("Hash\nInput: %s\nAlgorithm: %s", request.InputPath, request.Algorithm)
+		summary = fmt.Sprintf("Input      %s\nAlgorithm  %s", request.InputPath, request.Algorithm)
 	case app.BenchmarkRequest:
-		summary = fmt.Sprintf("Benchmark\nInput: %s\nReport: %s", request.InputPath, request.OutputPath)
+		summary = fmt.Sprintf("Input   %s\nReport  %s", request.InputPath, request.OutputPath)
 	case app.InspectRequest:
-		summary = fmt.Sprintf("Inspect\nInput: %s\nHeader fields are unauthenticated", request.InputPath)
+		summary = fmt.Sprintf("Archive  %s\n\nHeader fields are visible before authentication.", request.InputPath)
 	case app.VerifyRequest:
-		summary = fmt.Sprintf("Verify\nInput: %s\nMode: %s", request.InputPath, request.Mode)
+		summary = fmt.Sprintf("Archive  %s\nMode     %s", request.InputPath, request.Mode)
 	case app.ListRequest:
-		summary = fmt.Sprintf("Browse archive\nInput: %s", request.InputPath)
+		summary = fmt.Sprintf("Archive  %s", request.InputPath)
 	}
-	return m.styles.title.Render("Confirm") + "\n\n" + summary + "\n\n" + m.styles.help.Render("Enter: run  Esc: edit")
+	return strings.Join([]string{
+		m.styles.eyebrow.Render("FINAL CHECK"),
+		m.styles.hero.Render("Review operation"),
+		m.styles.muted.Render("Confirm only after the paths and settings are correct."),
+		"",
+		m.styles.eyebrow.Render("SUMMARY"),
+		summary,
+		"",
+		m.styles.primaryButton.Render("Run operation"),
+		m.styles.help.Render("Enter runs  •  Esc returns to the form"),
+	}, "\n")
 }
 
 func (m Model) resultView() string {
-	available := m.height - 9
+	available := m.height - 14
 	if available < 1 || available > len(m.resultLines) {
 		available = len(m.resultLines)
 	}
 	end := min(len(m.resultLines), m.resultOffset+available)
 	lines := m.resultLines[m.resultOffset:end]
-	return m.styles.success.Render(m.resultTitle) + "\n\n" + strings.Join(lines, "\n") + "\n\n" + m.styles.help.Render("Up/Down: scroll  Enter/Esc: home")
+	content := strings.Join(lines, "\n")
+	if content == "" {
+		content = m.styles.muted.Render("No details returned.")
+	}
+	return strings.Join([]string{
+		m.styles.eyebrow.Render("COMPLETE"),
+		m.styles.success.Render(m.resultTitle),
+		"",
+		content,
+		"",
+		m.styles.help.Render("↑/↓ scroll results  •  Enter or Esc returns home"),
+	}, "\n")
 }
 
 func (m Model) helpView() string {
-	return m.styles.title.Render("Help / About") + "\n\nCypherStorm protects files with an authenticated v1 format.\nPasswords and raw-key bytes are never rendered.\nRestore selects cipher and compression from authenticated metadata.\n\n" + m.styles.help.Render("Enter/Esc: home  Ctrl+C: quit")
+	return strings.Join([]string{
+		m.styles.eyebrow.Render("WORKSPACE GUIDE"),
+		m.styles.hero.Render("Private by design"),
+		m.styles.muted.Render("CypherStorm protects files with a canonical authenticated container."),
+		"",
+		m.styles.eyebrow.Render("NAVIGATION"),
+		"↑/↓ or Tab moves focus\nEnter opens or confirms\nEsc returns to the previous workspace\nCtrl+C exits safely",
+		"",
+		m.styles.eyebrow.Render("SECURITY"),
+		"Passwords and raw-key bytes are never rendered.\nRestore reads cipher and compression choices from authenticated metadata.\nInspect displays unauthenticated public header fields only.",
+		"",
+		m.styles.help.Render("Enter or Esc returns home"),
+	}, "\n")
 }

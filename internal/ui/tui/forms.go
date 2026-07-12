@@ -8,9 +8,9 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/nakshatraraghav/cypherstorm/internal/app"
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
-	"github.com/nakshatraraghav/cypherstorm/internal/hashing"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/hashing"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
 )
 
 type formKind uint8
@@ -279,6 +279,9 @@ func (f operationForm) outputPreview() string {
 }
 
 func cycle(current, delta, count int) int {
+	if count <= 0 {
+		return current
+	}
 	return (current + delta + count) % count
 }
 
@@ -314,57 +317,104 @@ func (f *operationForm) clearSecrets() {
 	f.keyFilePath = ""
 }
 
-func (f *operationForm) view(style styles, width int) string {
-	var title, description string
-	switch f.kind {
-	case formProtect:
-		title, description = "Protect", "Archive, compress, and encrypt"
-	case formRestore:
-		title, description = "Restore", "Authenticate and recover protected data"
-	case formHash:
-		title, description = "Hash", "Calculate digests for files or folders"
-	case formBenchmark:
-		title, description = "Benchmark", "Compare every codec and cipher combination"
-	case formInspect:
-		title, description = "Inspect", "Inspect a protected-file header without a credential"
-	case formVerify:
-		title, description = "Verify", "Authenticate and fully validate a protected archive"
-	case formList:
-		title, description = "Browse archive", "Authenticate and list protected archive contents"
+func (f operationForm) view(style styles, width int) string {
+	title, description := f.titleAndDescription()
+	lines := []string{
+		style.eyebrow.Render(f.kind.tag()),
+		style.hero.Render(title),
+		style.muted.Render(description),
 	}
-	lines := []string{style.brand.Render("CYPHERSTORM"), style.title.Render(title), style.muted.Render(description), ""}
+	previousGroup := ""
 	for index, slot := range f.slots() {
-		focused := index == f.focus
-		lines = append(lines, f.renderSlot(slot, focused, style, width))
+		group := f.groupForSlot(slot)
+		if group != previousGroup {
+			lines = append(lines, "", style.eyebrow.Render(group))
+			previousGroup = group
+		}
+		lines = append(lines, f.renderSlot(slot, index == f.focus, style, width))
 	}
 	if preview := f.outputPreview(); preview != "" && f.kind != formHash {
-		lines = append(lines, "", style.muted.Render("Will create  ")+style.path.Render(shortPath(preview, max(16, width-20))))
+		lines = append(lines, "", style.label.Render("OUTPUT PREVIEW"), style.path.Render(shortPath(preview, max(16, width-12))))
 	}
-	lines = append(lines, "", style.help.Render("tab/shift+tab move  •  enter opens  •  esc goes back"))
 	return strings.Join(lines, "\n")
+}
+
+func (f operationForm) titleAndDescription() (string, string) {
+	switch f.kind {
+	case formProtect:
+		return "Protect files", "Archive, compress, and encrypt locally."
+	case formRestore:
+		return "Restore files", "Authenticate before recovering data."
+	case formHash:
+		return "Hash input", "Calculate digests for files or folders."
+	case formBenchmark:
+		return "Benchmark", "Compare local compression and encryption combinations."
+	case formInspect:
+		return "Inspect header", "Read public container properties without a credential."
+	case formVerify:
+		return "Verify archive", "Authenticate and validate protected contents."
+	case formList:
+		return "Browse contents", "Authenticate before listing archived paths."
+	default:
+		return "", ""
+	}
+}
+
+func (f operationForm) groupForSlot(slot slotKind) string {
+	switch slot {
+	case slotInput, slotOutput:
+		return "LOCATION"
+	case slotCredential, slotPassword, slotConfirmation, slotKeyFile:
+		return "ACCESS"
+	case slotCodec, slotCipher, slotOverwrite, slotAlgorithm:
+		return "OPTIONS"
+	case slotSubmit:
+		return "REVIEW"
+	default:
+		return ""
+	}
+}
+
+func (k formKind) tag() string {
+	switch k {
+	case formProtect:
+		return "CREATE ARCHIVE"
+	case formRestore:
+		return "RECOVER ARCHIVE"
+	case formHash:
+		return "DIGEST"
+	case formBenchmark:
+		return "REPORT"
+	case formInspect:
+		return "READ HEADER"
+	case formVerify:
+		return "AUTHENTICATE"
+	case formList:
+		return "LIST CONTENTS"
+	default:
+		return ""
+	}
 }
 
 func (f *operationForm) renderSlot(slot slotKind, focused bool, style styles, width int) string {
 	marker := "  "
+	labelStyle := style.label
 	if focused {
 		marker = style.accent.Render("› ")
+		labelStyle = style.accent
 	}
 	row := func(label, value string) string {
-		content := style.label.Render(fmt.Sprintf("%-17s", label)) + value
-		if focused {
-			return marker + style.focused.Render(content)
-		}
-		return marker + content
+		return marker + labelStyle.Render(fmt.Sprintf("%-17s", label)) + value
 	}
 	selected := func(value string) string {
 		return style.selectBox.Render(value + "  ▾")
 	}
 	pathValue := func(value, empty string) string {
 		if value == "" {
-			return style.muted.Render(empty) + "  " + style.button.Render(" Browse ")
+			return style.muted.Render(empty) + "  " + style.button.Render("Browse")
 		}
 		available := max(14, width-40)
-		return style.path.Render(shortPath(value, available)) + "  " + style.button.Render(" Change ")
+		return style.path.Render(shortPath(value, available)) + "  " + style.button.Render("Change")
 	}
 
 	switch slot {
@@ -381,7 +431,7 @@ func (f *operationForm) renderSlot(slot slotKind, focused bool, style styles, wi
 	case slotPassword:
 		return row("Password", f.password.View())
 	case slotConfirmation:
-		return row("Confirm", f.confirmation.View())
+		return row("Confirm password", f.confirmation.View())
 	case slotKeyFile:
 		return row("Key file", pathValue(f.keyFilePath, "Not selected"))
 	case slotCodec:
@@ -389,15 +439,15 @@ func (f *operationForm) renderSlot(slot slotKind, focused bool, style styles, wi
 	case slotCipher:
 		return row("Encryption", selected(string(crypto.AllCipherIDs()[f.cipherIndex])))
 	case slotOverwrite:
-		value := "Off"
+		value := "Keep destination"
 		if f.overwrite {
-			value = "On"
+			value = "Replace destination"
 		}
-		return row("Overwrite", style.toggle.Render(value))
+		return row("Destination", style.toggle.Render(value))
 	case slotAlgorithm:
 		return row("Algorithm", selected(string(hashing.AllIDs()[f.algorithmIdx])))
 	case slotSubmit:
-		return marker + style.primaryButton.Render(" Continue ")
+		return marker + style.primaryButton.Render("Review operation")
 	default:
 		return ""
 	}

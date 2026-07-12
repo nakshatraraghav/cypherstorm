@@ -14,7 +14,7 @@ func newRekeyCommand(service Service, streams Streams) *cobra.Command {
 	c := &cobra.Command{Use: "rekey ARCHIVE", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		var current app.Credential
 		var e error
-		if len(identities) == 0 || keyFile != "" || credentialName != "" || passwordStdin {
+		if needsSymmetricCredential(identities, keyFile, credentialName, passwordStdin) {
 			current, e = resolveCredentialChoice(cmd, service, streams, credentialName, keyFile, passwordStdin, false)
 			if e != nil {
 				return e
@@ -50,7 +50,7 @@ func newRekeyCommand(service Service, streams Streams) *cobra.Command {
 	f.StringVar(&keyFile, "key-file", "", "current raw-key file")
 	f.StringVar(&credentialName, "credential", "", "current saved credential")
 	f.BoolVar(&passwordStdin, "password-stdin", false, "read current password from stdin")
-	f.StringSliceVar(&identities, "identity", nil, "current v2 private identity")
+	f.StringSliceVar(&identities, "identity", nil, "current private X25519 identity")
 	f.BoolVar(&newPassword, "new-password", false, "prompt for a replacement password")
 	f.StringVar(&newKeyFile, "new-key-file", "", "replacement raw-key file")
 	f.StringSliceVar(&addRecipients, "add-recipient", nil, "add X25519 public recipient")

@@ -4,8 +4,8 @@ import (
 	"fmt"
 
 	"github.com/nakshatraraghav/cypherstorm/internal/app"
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
 	"github.com/spf13/cobra"
 )
 
@@ -24,7 +24,6 @@ type protectOptions struct {
 	excludeCache      bool
 	dryRun            bool
 	verifyAfter       bool
-	format            string
 	recipients        []string
 	passwordRecipient bool
 	credentialHint    string
@@ -41,7 +40,7 @@ func newProtectCommand(service Service, streams Streams) *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error {
 			var credential app.Credential
 			var err error
-			needsCredential := options.format != "v2" || options.passwordRecipient || options.keyFile != "" || options.passwordStdin || options.credential != "" || len(options.recipients) == 0
+			needsCredential := options.passwordRecipient || options.keyFile != "" || options.passwordStdin || options.credential != "" || len(options.recipients) == 0
 			if !options.dryRun && needsCredential {
 				credential, err = resolveCredentialChoice(command, service, streams, options.credential, options.keyFile, options.passwordStdin, true)
 				if err != nil {
@@ -66,7 +65,6 @@ func newProtectCommand(service Service, streams Streams) *cobra.Command {
 				ExcludeCache:   options.excludeCache,
 				DryRun:         options.dryRun,
 				VerifyAfter:    options.verifyAfter,
-				Format:         options.format,
 				RecipientPaths: options.recipients,
 				CredentialHint: options.credentialHint,
 				PublicHint:     options.publicHint,
@@ -100,9 +98,8 @@ func newProtectCommand(service Service, streams Streams) *cobra.Command {
 	flags.BoolVar(&options.excludeCache, "exclude-cache", false, "exclude common cache directories")
 	flags.BoolVar(&options.dryRun, "dry-run", false, "preview selection without deriving a key or writing an artifact")
 	flags.BoolVar(&options.verifyAfter, "verify-after", false, "reopen and fully verify the published artifact")
-	flags.StringVar(&options.format, "format", "v1", "protected format: v1 or v2")
-	flags.StringSliceVar(&options.recipients, "recipient", nil, "v2 X25519 public recipient file")
-	flags.BoolVar(&options.passwordRecipient, "password-recipient", false, "add a v2 password recipient")
+	flags.StringSliceVar(&options.recipients, "recipient", nil, "X25519 public recipient file")
+	flags.BoolVar(&options.passwordRecipient, "password-recipient", false, "add a password recipient")
 	flags.StringVar(&options.credentialHint, "credential-hint", "", "encrypted private credential hint")
 	flags.StringVar(&options.publicHint, "public-hint", "", "public credential hint (leaks metadata)")
 	flags.BoolVar(&options.ackPublicMetadata, "acknowledge-public-metadata", false, "acknowledge that public hints are visible without authentication")

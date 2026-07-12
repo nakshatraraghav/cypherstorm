@@ -5,15 +5,18 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime"
 
 	"github.com/nakshatraraghav/cypherstorm/internal/app"
-	"github.com/nakshatraraghav/cypherstorm/internal/kdf"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/keymanage"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/wipe"
 	"golang.org/x/term"
 )
 
 const maxPasswordBytes = 1 << 20
 
+func needsSymmetricCredential(identities []string, keyFile, savedCredential string, passwordStdin bool) bool {
+	return len(identities) == 0 || keyFile != "" || savedCredential != "" || passwordStdin
+}
 func resolveCredential(streams Streams, keyFile string, passwordStdin, confirm bool) (app.Credential, error) {
 	if keyFile != "" && passwordStdin {
 		return app.Credential{}, fmt.Errorf("cli: --key-file and --password-stdin are mutually exclusive")
@@ -54,23 +57,9 @@ func resolveCredential(streams Streams, keyFile string, passwordStdin, confirm b
 }
 
 func readRawKeyFile(path string) ([]byte, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, fmt.Errorf("cli: inspect raw-key file %q: %w", path, err)
-	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, fmt.Errorf("cli: raw-key file %q must be a regular file, not a symlink", path)
-	}
-	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
-		return nil, fmt.Errorf("cli: raw-key file %q permissions %04o expose key material; require 0600 or stricter", path, info.Mode().Perm())
-	}
-	key, err := os.ReadFile(path)
+	key, err := keymanage.Load(path)
 	if err != nil {
 		return nil, fmt.Errorf("cli: read raw-key file %q: %w", path, err)
-	}
-	if len(key) != kdf.MasterKeySize {
-		clearBytes(key)
-		return nil, fmt.Errorf("cli: raw-key file must contain exactly %d binary bytes, got %d", kdf.MasterKeySize, len(key))
 	}
 	return key, nil
 }
@@ -116,7 +105,5 @@ func readTerminalPassword(streams Streams, prompt string) ([]byte, error) {
 }
 
 func clearBytes(value []byte) {
-	for index := range value {
-		value[index] = 0
-	}
+	wipe.Bytes(value)
 }
