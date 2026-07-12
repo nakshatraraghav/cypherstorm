@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
 	"github.com/nakshatraraghav/cypherstorm/internal/report"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
 )
 
 func TestReportFastestAndBestRatioEmptyReturnsFalse(t *testing.T) {

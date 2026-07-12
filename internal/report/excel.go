@@ -11,6 +11,12 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
+const (
+	headerFillColor    = "#CCCCCC"
+	successColumnWidth = 15
+	failureColumnWidth = 30
+)
+
 // WriteExcelReport renders r as an XLSX workbook saved at path: a "Time
 // Sorted Results" sheet, a "Ratio Sorted Results" sheet (headered but
 // otherwise empty when r has no successes), and a "Failures" sheet listing
@@ -70,7 +76,7 @@ func WriteExcelReport(path string, r *Report) (err error) {
 
 	headerStyle, err := f.NewStyle(&excelize.Style{
 		Font: &excelize.Font{Bold: true},
-		Fill: excelize.Fill{Type: "pattern", Color: []string{"#CCCCCC"}, Pattern: 1},
+		Fill: excelize.Fill{Type: "pattern", Color: []string{headerFillColor}, Pattern: 1},
 	})
 	if err != nil {
 		return fmt.Errorf("report: failed to create header style: %w", err)
@@ -89,8 +95,36 @@ func WriteExcelReport(path string, r *Report) (err error) {
 
 func writeSuccessSheet(f *excelize.File, sheet string, results []Success) error {
 	headers := []string{"Compression", "Cipher", "Time", "Ratio", "Original Size", "Final Size"}
-	for i, header := range headers {
-		cell, err := excelize.CoordinatesToCellName(i+1, 1)
+	rows := make([][]any, 0, len(results))
+	for _, result := range results {
+		rows = append(rows, []any{
+			string(result.Combination.Codec),
+			string(result.Combination.Cipher),
+			result.Duration.Round(time.Millisecond).String(),
+			fmt.Sprintf("%.2fx", result.CompressionRatio),
+			result.OriginalSize,
+			result.FinalSize,
+		})
+	}
+	return writeSheet(f, sheet, headers, rows, successColumnWidth)
+}
+
+func writeFailuresSheet(f *excelize.File, sheet string, failures []Failure) error {
+	headers := []string{"Compression", "Cipher", "Error"}
+	rows := make([][]any, 0, len(failures))
+	for _, failure := range failures {
+		rows = append(rows, []any{
+			string(failure.Combination.Codec),
+			string(failure.Combination.Cipher),
+			failure.Err.Error(),
+		})
+	}
+	return writeSheet(f, sheet, headers, rows, failureColumnWidth)
+}
+
+func writeSheet(f *excelize.File, sheet string, headers []string, rows [][]any, columnWidth float64) error {
+	for column, header := range headers {
+		cell, err := excelize.CoordinatesToCellName(column+1, 1)
 		if err != nil {
 			return fmt.Errorf("report: calculate header cell for sheet %q: %w", sheet, err)
 		}
@@ -98,19 +132,9 @@ func writeSuccessSheet(f *excelize.File, sheet string, results []Success) error 
 			return fmt.Errorf("report: write header cell %s on sheet %q: %w", cell, sheet, err)
 		}
 	}
-
-	for i, s := range results {
-		row := i + 2
-		values := []any{
-			string(s.Combination.Codec),
-			string(s.Combination.Cipher),
-			s.Duration.Round(time.Millisecond).String(),
-			fmt.Sprintf("%.2fx", s.CompressionRatio),
-			s.OriginalSize,
-			s.FinalSize,
-		}
+	for row, values := range rows {
 		for column, value := range values {
-			cell, err := excelize.CoordinatesToCellName(column+1, row)
+			cell, err := excelize.CoordinatesToCellName(column+1, row+2)
 			if err != nil {
 				return fmt.Errorf("report: calculate result cell for sheet %q: %w", sheet, err)
 			}
@@ -119,56 +143,13 @@ func writeSuccessSheet(f *excelize.File, sheet string, results []Success) error 
 			}
 		}
 	}
-
-	for i := 1; i <= len(headers); i++ {
-		colName, err := excelize.ColumnNumberToName(i)
+	for column := 1; column <= len(headers); column++ {
+		name, err := excelize.ColumnNumberToName(column)
 		if err != nil {
 			return fmt.Errorf("report: calculate column name for sheet %q: %w", sheet, err)
 		}
-		if err := f.SetColWidth(sheet, colName, colName, 15); err != nil {
+		if err := f.SetColWidth(sheet, name, name, columnWidth); err != nil {
 			return fmt.Errorf("report: set column width on sheet %q: %w", sheet, err)
-		}
-	}
-	return nil
-}
-
-func writeFailuresSheet(f *excelize.File, sheet string, failures []Failure) error {
-	headers := []string{"Compression", "Cipher", "Error"}
-	for i, header := range headers {
-		cell, err := excelize.CoordinatesToCellName(i+1, 1)
-		if err != nil {
-			return fmt.Errorf("report: calculate failure header cell for sheet %q: %w", sheet, err)
-		}
-		if err := f.SetCellValue(sheet, cell, header); err != nil {
-			return fmt.Errorf("report: write failure header cell %s on sheet %q: %w", cell, sheet, err)
-		}
-	}
-
-	for i, failure := range failures {
-		row := i + 2
-		values := []any{
-			string(failure.Combination.Codec),
-			string(failure.Combination.Cipher),
-			failure.Err.Error(),
-		}
-		for column, value := range values {
-			cell, err := excelize.CoordinatesToCellName(column+1, row)
-			if err != nil {
-				return fmt.Errorf("report: calculate failure cell for sheet %q: %w", sheet, err)
-			}
-			if err := f.SetCellValue(sheet, cell, value); err != nil {
-				return fmt.Errorf("report: write failure cell %s on sheet %q: %w", cell, sheet, err)
-			}
-		}
-	}
-
-	for i := 1; i <= len(headers); i++ {
-		colName, err := excelize.ColumnNumberToName(i)
-		if err != nil {
-			return fmt.Errorf("report: calculate failure column name for sheet %q: %w", sheet, err)
-		}
-		if err := f.SetColWidth(sheet, colName, colName, 30); err != nil {
-			return fmt.Errorf("report: set failure column width on sheet %q: %w", sheet, err)
 		}
 	}
 	return nil

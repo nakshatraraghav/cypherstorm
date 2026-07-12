@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
 	"github.com/nakshatraraghav/cypherstorm/internal/report"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
 	"github.com/xuri/excelize/v2"
 )
 

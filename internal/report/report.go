@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
 )
 
 // Combination identifies one codec/cipher pair benchmarked together.
