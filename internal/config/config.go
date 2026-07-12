@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -24,13 +25,14 @@ type File struct {
 	VerifyAfter        bool   `toml:"verify_after" json:"verify_after"`
 }
 type Policy struct {
-	Name          string `json:"name"`
-	Compression   string `json:"compression"`
-	Cipher        string `json:"cipher"`
-	RecordSize    uint32 `json:"record_size"`
-	VerifyAfter   bool   `json:"verify_after"`
-	MaxEntries    int    `json:"max_entries"`
-	MaxTotalBytes int64  `json:"max_total_bytes"`
+	Name               string `json:"name"`
+	Compression        string `json:"compression"`
+	Cipher             string `json:"cipher"`
+	RecordSize         uint32 `json:"record_size"`
+	DefaultDestination string `json:"default_destination,omitempty"`
+	VerifyAfter        bool   `json:"verify_after"`
+	MaxEntries         int    `json:"max_entries"`
+	MaxTotalBytes      int64  `json:"max_total_bytes"`
 }
 
 func Defaults() File {
@@ -81,10 +83,30 @@ func Load(path string) (File, error) {
 	return cfg, nil
 }
 func containsSecretKey(data []byte) bool {
-	lower := strings.ToLower(string(data))
-	for _, word := range []string{"password", "raw_key", "private_key", "keychain_token"} {
-		if strings.Contains(lower, word) {
-			return true
+	var document map[string]any
+	if err := toml.Unmarshal(data, &document); err != nil {
+		return false
+	}
+	return containsSecretKeyValue(document)
+}
+
+func containsSecretKeyValue(value any) bool {
+	switch value := value.(type) {
+	case map[string]any:
+		for key, child := range value {
+			switch strings.ToLower(key) {
+			case "password", "raw_key", "private_key", "keychain_token":
+				return true
+			}
+			if containsSecretKeyValue(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range value {
+			if containsSecretKeyValue(child) {
+				return true
+			}
 		}
 	}
 	return false
@@ -113,6 +135,14 @@ func Resolve(cfg File, profile string) (Policy, error) {
 		if cfg.DefaultCipher != "" {
 			base.Cipher = cfg.DefaultCipher
 		}
+		if cfg.DefaultRecordSize != "" {
+			recordSize, err := parseByteSize(cfg.DefaultRecordSize)
+			if err != nil {
+				return Policy{}, fmt.Errorf("config: default record size: %w", err)
+			}
+			base.RecordSize = recordSize
+		}
+		base.DefaultDestination = cfg.DefaultDestination
 		if cfg.VerifyAfter {
 			base.VerifyAfter = true
 		}
@@ -127,4 +157,37 @@ func Resolve(cfg File, profile string) (Policy, error) {
 		base.VerifyAfter = true
 	}
 	return base, nil
+}
+
+func parseByteSize(value string) (uint32, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, fmt.Errorf("size is empty")
+	}
+	multiplier := uint64(1)
+	upper := strings.ToUpper(value)
+	for _, unit := range []struct {
+		suffix string
+		factor uint64
+	}{
+		{suffix: "GIB", factor: 1 << 30},
+		{suffix: "MIB", factor: 1 << 20},
+		{suffix: "KIB", factor: 1 << 10},
+		{suffix: "B", factor: 1},
+	} {
+		if strings.HasSuffix(upper, unit.suffix) {
+			value = strings.TrimSpace(value[:len(value)-len(unit.suffix)])
+			multiplier = unit.factor
+			break
+		}
+	}
+	number, err := strconv.ParseUint(value, 10, 32)
+	if err != nil || number == 0 || number > uint64(^uint32(0))/multiplier {
+		return 0, fmt.Errorf("invalid byte size %q", value)
+	}
+	size := number * multiplier
+	if size > uint64(^uint32(0)) {
+		return 0, fmt.Errorf("invalid byte size %q", value)
+	}
+	return uint32(size), nil
 }
