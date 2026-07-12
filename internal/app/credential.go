@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/credentialstore"
-	"github.com/nakshatraraghav/cypherstorm/internal/keymanage"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/credentialstore"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/keymanage"
 )
 
 type CredentialDescriptor struct {

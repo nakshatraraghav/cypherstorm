@@ -8,14 +8,13 @@ import (
 	"os"
 	"time"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/archive"
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
-	"github.com/nakshatraraghav/cypherstorm/internal/format"
-	"github.com/nakshatraraghav/cypherstorm/internal/fsutil"
-	"github.com/nakshatraraghav/cypherstorm/internal/identity"
-	"github.com/nakshatraraghav/cypherstorm/internal/keymanage"
-	"github.com/nakshatraraghav/cypherstorm/internal/v2"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/identity"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/keymanage"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/container"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/archive"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/fsutil"
 )
 
 func (s *Service) Protect(ctx context.Context, req ProtectRequest, sink EventSink) (result ProtectResult, retErr error) {
@@ -59,18 +58,6 @@ func (s *Service) Protect(ctx context.Context, req ProtectRequest, sink EventSin
 	if err != nil {
 		return ProtectResult{}, err
 	}
-	if req.Format == "" {
-		req.Format = "v1"
-	}
-	var wireCodec format.CodecID
-	if req.Format == "v1" {
-		wireCodec, err = wireCodecID(req.Codec)
-		if err != nil {
-			return ProtectResult{}, err
-		}
-	} else if req.Format != "v2" {
-		return ProtectResult{}, fmt.Errorf("app: unsupported protected format %q", req.Format)
-	}
 	if _, err := crypto.NewCipherSuite(req.Cipher); err != nil {
 		return ProtectResult{}, err
 	}
@@ -94,19 +81,6 @@ func (s *Service) Protect(ctx context.Context, req ProtectRequest, sink EventSin
 
 	emit(sink, Event{Phase: PhaseEncrypting, Detail: string(req.Cipher)})
 	publishErr := fsutil.PublishAtomic(req.OutputPath, req.Overwrite, func(output *os.File) error {
-		if req.Format == "v1" {
-			credential, err := req.Credential.kdfCredential()
-			if err != nil {
-				return err
-			}
-			return crypto.Encrypt(ctx, compressed, output, crypto.EncryptOptions{
-				Credential: credential,
-				CipherID:   req.Cipher,
-				CodecID:    wireCodec,
-				Argon2:     s.argon2,
-				RecordSize: s.recordSize,
-			})
-		}
 		publicKeys := make([]identity.Public, 0, len(req.RecipientPaths))
 		for _, path := range req.RecipientPaths {
 			publicKey, err := identity.LoadPublic(path)
@@ -115,7 +89,7 @@ func (s *Service) Protect(ctx context.Context, req ProtectRequest, sink EventSin
 			}
 			publicKeys = append(publicKeys, publicKey)
 		}
-		recipients := v2.RecipientOptions{PublicKeys: publicKeys}
+		recipients := container.RecipientOptions{PublicKeys: publicKeys}
 		switch req.Credential.Kind {
 		case CredentialPassword:
 			recipients.Password = req.Credential.Password
@@ -139,9 +113,9 @@ func (s *Service) Protect(ctx context.Context, req ProtectRequest, sink EventSin
 				return err
 			}
 		}
-		return v2.Encrypt(ctx, compressed, output, v2.EncryptOptions{
-			Cipher: req.Cipher, Codec: req.Codec, RecordSize: s.recordSize, Recipients: recipients,
-			Metadata:   v2.Metadata{OriginalName: info.Name(), SourceType: sourceType, ProtectedAt: s.now().UTC().Format(time.RFC3339), CredentialHint: req.CredentialHint, CredentialFingerprint: credentialFingerprint},
+		return container.Encrypt(ctx, compressed, output, container.EncryptOptions{
+			Cipher: req.Cipher, Codec: req.Codec, RecordSize: s.recordSize, Argon2: s.argon2, Recipients: recipients,
+			Metadata:   container.Metadata{OriginalName: info.Name(), SourceType: sourceType, ProtectedAt: s.now().UTC().Format(time.RFC3339), CredentialHint: req.CredentialHint, CredentialFingerprint: credentialFingerprint},
 			PublicHint: req.PublicHint,
 		})
 	})

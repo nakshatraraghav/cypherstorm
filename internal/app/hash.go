@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/hashing"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/hashing"
 )
 
 func (s *Service) Hash(ctx context.Context, req HashRequest, sink EventSink) ([]HashResult, error) {

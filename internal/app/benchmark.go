@@ -8,11 +8,11 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
-	"github.com/nakshatraraghav/cypherstorm/internal/fsutil"
-	"github.com/nakshatraraghav/cypherstorm/internal/kdf"
 	"github.com/nakshatraraghav/cypherstorm/internal/report"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/container"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/kdf"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/fsutil"
 )
 
 var ErrNoBenchmarkSuccess = errors.New("app: every benchmark combination failed")
@@ -105,18 +105,13 @@ func (s *Service) runBenchmarkCombination(ctx context.Context, inputPath string,
 	if err != nil {
 		return 0, errors.Join(err, workspace.Close())
 	}
-	wireCodec, err := wireCodecID(combination.Codec)
-	if err != nil {
-		_ = compressed.Close()
-		return 0, errors.Join(err, workspace.Close())
-	}
 	counter := &countingWriter{writer: io.Discard}
-	runErr = crypto.Encrypt(ctx, compressed, counter, crypto.EncryptOptions{
-		Credential: kdf.Credential{Kind: kdf.SourceRaw, RawKey: make([]byte, kdf.MasterKeySize)},
-		CipherID:   combination.Cipher,
-		CodecID:    wireCodec,
-		Argon2:     s.argon2,
+	runErr = container.Encrypt(ctx, compressed, counter, container.EncryptOptions{
+		Cipher:     combination.Cipher,
+		Codec:      combination.Codec,
 		RecordSize: s.recordSize,
+		Argon2:     s.argon2,
+		Recipients: container.RecipientOptions{RawKey: make([]byte, kdf.MasterKeySize)},
 	})
 	closeErr := compressed.Close()
 	workspaceErr := workspace.Close()

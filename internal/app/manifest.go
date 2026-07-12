@@ -13,7 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/fsutil"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/fsutil"
 )
 
 const maxManifestSize = 64 << 20

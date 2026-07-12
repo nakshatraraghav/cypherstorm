@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
 )
 
 type BatchProtectRequest struct {

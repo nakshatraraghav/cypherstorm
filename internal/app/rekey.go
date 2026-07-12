@@ -6,9 +6,9 @@ import (
 	"io"
 	"os"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/fsutil"
-	"github.com/nakshatraraghav/cypherstorm/internal/identity"
-	"github.com/nakshatraraghav/cypherstorm/internal/v2"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/identity"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/container"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/fsutil"
 )
 
 type RekeyRequest struct {
@@ -38,14 +38,14 @@ func (s *Service) Rekey(ctx context.Context, req RekeyRequest, sink EventSink) (
 		return RekeyResult{}, err
 	}
 	defer input.Close()
-	auth := v2.DecryptOptions{IdentityPaths: req.IdentityPaths}
+	auth := container.DecryptOptions{IdentityPaths: req.IdentityPaths}
 	switch req.Credential.Kind {
 	case CredentialPassword:
 		auth.Password = req.Credential.Password
 	case CredentialRawKey:
 		auth.RawKey = req.Credential.RawKey
 	}
-	add := v2.RecipientOptions{}
+	add := container.RecipientOptions{}
 	replaceSymmetric := false
 	switch req.NewCredential.Kind {
 	case CredentialPassword:
@@ -66,7 +66,7 @@ func (s *Service) Rekey(ctx context.Context, req RekeyRequest, sink EventSink) (
 	var payloadBytes int64
 	err = fsutil.PublishAtomic(req.OutputPath, false, func(output *os.File) error {
 		var e error
-		payloadBytes, e = v2.Rekey(ctx, input, output, auth, add, req.RemoveRecipientIDs, replaceSymmetric)
+		payloadBytes, e = container.Rekey(ctx, input, output, auth, add, req.RemoveRecipientIDs, replaceSymmetric)
 		if e != nil {
 			return e
 		}
@@ -78,7 +78,7 @@ func (s *Service) Rekey(ctx context.Context, req RekeyRequest, sink EventSink) (
 		}
 		verify := auth
 		if replaceSymmetric {
-			verify = v2.DecryptOptions{IdentityPaths: req.IdentityPaths}
+			verify = container.DecryptOptions{IdentityPaths: req.IdentityPaths}
 			switch req.NewCredential.Kind {
 			case CredentialPassword:
 				verify.Password = req.NewCredential.Password
@@ -86,7 +86,7 @@ func (s *Service) Rekey(ctx context.Context, req RekeyRequest, sink EventSink) (
 				verify.RawKey = req.NewCredential.RawKey
 			}
 		}
-		_, _, e = v2.Decrypt(ctx, output, io.Discard, verify)
+		_, _, e = container.Decrypt(ctx, output, io.Discard, verify)
 		return e
 	})
 	if err != nil {

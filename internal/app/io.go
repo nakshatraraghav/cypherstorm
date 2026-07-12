@@ -9,9 +9,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/archive"
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/fsutil"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/archive"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/fsutil"
 )
 
 func validateSource(path string) (os.FileInfo, error) {

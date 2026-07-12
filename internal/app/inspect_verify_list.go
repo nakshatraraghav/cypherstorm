@@ -9,14 +9,13 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/archive"
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
-	"github.com/nakshatraraghav/cypherstorm/internal/format"
-	"github.com/nakshatraraghav/cypherstorm/internal/fsutil"
-	"github.com/nakshatraraghav/cypherstorm/internal/kdf"
-	"github.com/nakshatraraghav/cypherstorm/internal/selection"
-	"github.com/nakshatraraghav/cypherstorm/internal/v2"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/container"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/kdf"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/archive"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/fsutil"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/selection"
 )
 
 type InspectRequest struct {
@@ -39,7 +38,7 @@ type InspectResult struct {
 	HeaderAuthenticated bool                   `json:"header_authenticated"`
 	RecipientCount      int                    `json:"recipient_count,omitempty"`
 	PublicHint          string                 `json:"public_hint,omitempty"`
-	PrivateMetadata     *v2.Metadata           `json:"private_metadata,omitempty"`
+	PrivateMetadata     *container.Metadata    `json:"private_metadata,omitempty"`
 }
 
 type VerifyMode string
@@ -48,6 +47,8 @@ const (
 	VerifyQuick VerifyMode = "quick"
 	VerifyFull  VerifyMode = "full"
 )
+
+var ErrUnsupportedProtectedFormat = errors.New("app: unsupported protected-file format")
 
 type VerifyRequest struct {
 	InputPath     string
@@ -93,69 +94,41 @@ func (s *Service) Inspect(ctx context.Context, req InspectRequest, sink EventSin
 	if _, err := io.ReadFull(f, magic[:]); err != nil {
 		return InspectResult{}, err
 	}
+	if magic != container.Magic {
+		return InspectResult{}, fmt.Errorf("%w: expected CypherStorm v2", ErrUnsupportedProtectedFormat)
+	}
 	if _, err := f.Seek(0, io.SeekStart); err != nil {
 		return InspectResult{}, err
 	}
-	if magic == v2.Magic {
-		inspected, err := v2.Inspect(f)
-		if err != nil {
-			return InspectResult{}, err
-		}
-		if req.Authenticate {
-			if _, err := f.Seek(0, io.SeekStart); err != nil {
-				return InspectResult{}, err
-			}
-			options := v2.DecryptOptions{IdentityPaths: req.IdentityPaths}
-			if req.Credential.Kind == CredentialPassword {
-				options.Password = req.Credential.Password
-			} else if req.Credential.Kind == CredentialRawKey {
-				options.RawKey = req.Credential.RawKey
-			}
-			_, metadata, err := v2.Decrypt(ctx, f, io.Discard, options)
-			if err != nil {
-				return InspectResult{}, err
-			}
-			result := InspectResult{
-				Path: req.InputPath, FormatVersion: 2, HeaderLength: inspected.HeaderLength,
-				Cipher: crypto.CipherID(inspected.Header.Cipher), Codec: compress.CompressionID(inspected.Header.Codec),
-				RecordSize: inspected.Header.RecordSize, ContainerBytes: info.Size(),
-				RecipientCount: len(inspected.Header.Recipients), PublicHint: inspected.Header.PublicHint, HeaderAuthenticated: true,
-				PrivateMetadata: &metadata,
-			}
-			return result, nil
-		}
-		return InspectResult{
-			Path: req.InputPath, FormatVersion: 2, HeaderLength: inspected.HeaderLength,
-			Cipher: crypto.CipherID(inspected.Header.Cipher), Codec: compress.CompressionID(inspected.Header.Codec),
-			RecordSize: inspected.Header.RecordSize, ContainerBytes: info.Size(),
-			RecipientCount: len(inspected.Header.Recipients), PublicHint: inspected.Header.PublicHint,
-		}, nil
-	}
-	h, headerLen, err := readV1Header(f)
+	inspected, err := container.Inspect(f)
 	if err != nil {
 		return InspectResult{}, err
 	}
-	if h.KDFID == format.KDFArgon2id {
-		params := kdf.Argon2Params{Time: h.Argon2Time, MemoryKiB: h.Argon2MemoryKiB, Parallelism: h.Argon2Parallelism, KeyLength: h.Argon2KeyLength}
-		if err := params.Validate(); err != nil {
-			return InspectResult{}, fmt.Errorf("app: inspect KDF policy: %w", err)
-		}
+	result := InspectResult{
+		Path: req.InputPath, FormatVersion: container.Version, HeaderLength: inspected.HeaderLength,
+		Cipher: crypto.CipherID(inspected.Header.Cipher), Codec: compress.CompressionID(inspected.Header.Codec),
+		RecordSize: inspected.Header.RecordSize, ContainerBytes: info.Size(),
+		RecipientCount: len(inspected.Header.Recipients), PublicHint: inspected.Header.PublicHint,
 	}
-	cipherID, err := crypto.FromWireCipherID(h.CipherID)
+	if !req.Authenticate {
+		return result, nil
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return InspectResult{}, err
+	}
+	options := container.DecryptOptions{IdentityPaths: req.IdentityPaths}
+	switch req.Credential.Kind {
+	case CredentialPassword:
+		options.Password = req.Credential.Password
+	case CredentialRawKey:
+		options.RawKey = req.Credential.RawKey
+	}
+	_, metadata, err := container.Decrypt(ctx, f, io.Discard, options)
 	if err != nil {
 		return InspectResult{}, err
 	}
-	codec, err := codecFromWireID(h.CodecID)
-	if err != nil {
-		return InspectResult{}, err
-	}
-	result := InspectResult{Path: req.InputPath, FormatVersion: h.Version, HeaderLength: uint32(headerLen), Cipher: cipherID, Codec: codec.ID(), RecordSize: h.RecordSize, ContainerBytes: info.Size()}
-	if h.KDFID == format.KDFRaw {
-		result.CredentialKind = CredentialRawKey
-	} else {
-		result.CredentialKind = CredentialPassword
-		result.Argon2 = &kdf.Argon2Params{Time: h.Argon2Time, MemoryKiB: h.Argon2MemoryKiB, Parallelism: h.Argon2Parallelism, KeyLength: h.Argon2KeyLength}
-	}
+	result.HeaderAuthenticated = true
+	result.PrivateMetadata = &metadata
 	return result, nil
 }
 
@@ -239,24 +212,6 @@ func openRegular(path string) (*os.File, os.FileInfo, error) {
 	return f, info, nil
 }
 
-func readV1Header(r io.Reader) (*format.Header, uint16, error) {
-	prefix := make([]byte, format.FixedPrefixLen)
-	if _, err := io.ReadFull(r, prefix); err != nil {
-		return nil, 0, fmt.Errorf("app: read header prefix: %w", err)
-	}
-	length, err := format.PeekHeaderLength(prefix)
-	if err != nil {
-		return nil, 0, err
-	}
-	buf := make([]byte, length)
-	copy(buf, prefix)
-	if _, err := io.ReadFull(r, buf[format.FixedPrefixLen:]); err != nil {
-		return nil, 0, fmt.Errorf("app: read header: %w", err)
-	}
-	h, err := format.DecodeHeader(buf)
-	return h, uint16(length), err
-}
-
 func (s *Service) decodeAuthenticated(ctx context.Context, input string, credential Credential, identityPaths []string, sink EventSink) (*fsutil.Workspace, string, compress.CompressionID, error) {
 	protected, _, err := openRegular(input)
 	if err != nil {
@@ -266,6 +221,9 @@ func (s *Service) decodeAuthenticated(ctx context.Context, input string, credent
 	var magic [8]byte
 	if _, err := io.ReadFull(protected, magic[:]); err != nil {
 		return nil, "", "", err
+	}
+	if magic != container.Magic {
+		return nil, "", "", fmt.Errorf("%w: expected CypherStorm v2", ErrUnsupportedProtectedFormat)
 	}
 	if _, err := protected.Seek(0, io.SeekStart); err != nil {
 		return nil, "", "", err
@@ -285,34 +243,14 @@ func (s *Service) decodeAuthenticated(ctx context.Context, input string, credent
 		return nil, "", "", err
 	}
 	emit(sink, Event{Phase: Phase("authenticating")})
-	var codecID compress.CompressionID
-	var decErr error
-	if magic == v2.Magic {
-		options := v2.DecryptOptions{IdentityPaths: identityPaths}
-		switch credential.Kind {
-		case CredentialPassword:
-			options.Password = credential.Password
-		case CredentialRawKey:
-			options.RawKey = credential.RawKey
-		}
-		codecID, _, decErr = v2.Decrypt(ctx, protected, out, options)
-	} else {
-		cred, credentialErr := credential.kdfCredential()
-		if credentialErr != nil {
-			_ = out.Close()
-			return nil, "", "", credentialErr
-		}
-		wireCodec, decryptErr := crypto.Decrypt(ctx, protected, out, cred)
-		decErr = decryptErr
-		if decErr == nil {
-			codec, codecErr := codecFromWireID(wireCodec)
-			if codecErr != nil {
-				decErr = codecErr
-			} else {
-				codecID = codec.ID()
-			}
-		}
+	options := container.DecryptOptions{IdentityPaths: identityPaths}
+	switch credential.Kind {
+	case CredentialPassword:
+		options.Password = credential.Password
+	case CredentialRawKey:
+		options.RawKey = credential.RawKey
 	}
+	codecID, _, decErr := container.Decrypt(ctx, protected, out, options)
 	if decErr == nil {
 		decErr = out.Sync()
 	}

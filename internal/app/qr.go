@@ -3,8 +3,8 @@ package app
 import (
 	"context"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/identity"
-	"github.com/nakshatraraghav/cypherstorm/internal/qrexchange"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/identity"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/qrexchange"
 )
 
 type QRResult struct {

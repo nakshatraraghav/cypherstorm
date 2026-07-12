@@ -5,8 +5,8 @@ import (
 	"io/fs"
 	"strings"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/archive"
-	"github.com/nakshatraraghav/cypherstorm/internal/selection"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/archive"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/selection"
 )
 
 type SelectionPreview struct {

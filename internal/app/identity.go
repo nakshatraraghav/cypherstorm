@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/identity"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/identity"
 )
 
 type IdentityResult struct {
@@ -13,9 +13,10 @@ type IdentityResult struct {
 	Public      *identity.Public `json:"public,omitempty"`
 }
 type SignatureResult struct {
-	Path      string              `json:"path"`
-	Valid     bool                `json:"valid"`
-	Signature *identity.Signature `json:"signature,omitempty"`
+	Path              string              `json:"path"`
+	Valid             bool                `json:"valid"`
+	SignerFingerprint string              `json:"signer_fingerprint,omitempty"`
+	Signature         *identity.Signature `json:"signature,omitempty"`
 }
 
 func (s *Service) IdentityGenerate(ctx context.Context, kind, path string) (IdentityResult, error) {
@@ -74,10 +75,10 @@ func (s *Service) SignatureInspect(ctx context.Context, path string) (SignatureR
 	sig, err := identity.InspectSignature(path)
 	return SignatureResult{Path: path, Valid: err == nil, Signature: &sig}, err
 }
-func (s *Service) SignatureVerify(ctx context.Context, input, path string) (SignatureResult, error) {
+func (s *Service) SignatureVerify(ctx context.Context, input, path, trustedSigner string) (SignatureResult, error) {
 	if err := ctx.Err(); err != nil {
 		return SignatureResult{}, err
 	}
-	err := identity.Verify(input, path)
-	return SignatureResult{Path: path, Valid: err == nil}, err
+	fingerprint, err := identity.Verify(input, path, trustedSigner)
+	return SignatureResult{Path: path, Valid: err == nil, SignerFingerprint: fingerprint}, err
 }

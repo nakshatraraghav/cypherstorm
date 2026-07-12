@@ -11,11 +11,12 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/crypto"
-	"github.com/nakshatraraghav/cypherstorm/internal/hashing"
-	"github.com/nakshatraraghav/cypherstorm/internal/kdf"
 	"github.com/nakshatraraghav/cypherstorm/internal/report"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/container"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/crypto"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/hashing"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/kdf"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
 )
 
 func testService(t *testing.T) *Service {
@@ -85,6 +86,44 @@ func TestProtectRestoreMatrix(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestProtectUsesCanonicalV2AndRejectsLegacyFormat(t *testing.T) {
+	service := testService(t)
+	root := t.TempDir()
+	input := filepath.Join(root, "input.txt")
+	if err := os.WriteFile(input, []byte("canonical payload"), 0o600); err != nil {
+		t.Fatalf("write input: %v", err)
+	}
+	protected := filepath.Join(root, "input.cys")
+	if _, err := service.Protect(context.Background(), ProtectRequest{
+		InputPath: input, OutputPath: protected, Credential: rawKeyCredential(),
+		Cipher: crypto.AES256GCM, Codec: compress.CompressionGzip,
+	}, nil); err != nil {
+		t.Fatalf("Protect: %v", err)
+	}
+	protectedBytes, err := os.ReadFile(protected)
+	if err != nil {
+		t.Fatalf("read protected output: %v", err)
+	}
+	if len(protectedBytes) < len(container.Magic) || !bytes.Equal(protectedBytes[:len(container.Magic)], container.Magic[:]) {
+		t.Fatalf("protected output is not v2: %x", protectedBytes)
+	}
+	inspected, err := service.Inspect(context.Background(), InspectRequest{InputPath: protected}, nil)
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if inspected.FormatVersion != container.Version {
+		t.Fatalf("format version = %d, want %d", inspected.FormatVersion, container.Version)
+	}
+
+	legacy := filepath.Join(root, "legacy.cys")
+	if err := os.WriteFile(legacy, []byte("CYPHRSTM"), 0o600); err != nil {
+		t.Fatalf("write legacy marker: %v", err)
+	}
+	if _, err := service.Inspect(context.Background(), InspectRequest{InputPath: legacy}, nil); !errors.Is(err, ErrUnsupportedProtectedFormat) {
+		t.Fatalf("Inspect legacy error = %v, want ErrUnsupportedProtectedFormat", err)
 	}
 }
 

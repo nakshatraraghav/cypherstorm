@@ -10,10 +10,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/archive"
-	"github.com/nakshatraraghav/cypherstorm/internal/compress"
-	"github.com/nakshatraraghav/cypherstorm/internal/fsutil"
-	"github.com/nakshatraraghav/cypherstorm/internal/selection"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/archive"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/compress"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/fsutil"
+	"github.com/nakshatraraghav/cypherstorm/internal/storage/selection"
 )
 
 func (s *Service) Restore(ctx context.Context, req RestoreRequest, sink EventSink) (result RestoreResult, retErr error) {

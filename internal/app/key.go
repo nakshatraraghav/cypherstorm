@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nakshatraraghav/cypherstorm/internal/keymanage"
+	"github.com/nakshatraraghav/cypherstorm/internal/credential/keymanage"
+	"github.com/nakshatraraghav/cypherstorm/internal/security/wipe"
 )
 
 type KeyGenerateRequest struct{ OutputPath string }
@@ -52,7 +53,5 @@ func (s *Service) KeyFingerprint(ctx context.Context, path string) (KeyResult, e
 	return s.KeyValidate(ctx, path)
 }
 func clearSecret(b []byte) {
-	for i := range b {
-		b[i] = 0
-	}
+	wipe.Bytes(b)
 }
