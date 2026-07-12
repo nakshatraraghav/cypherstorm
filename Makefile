@@ -1,12 +1,18 @@
+.PHONY: build run test clean key-gen
+
 build:
-	@go build -o cli ./main.go 
+	@go build -o cypherstorm ./cmd/cypherstorm
 
 run:
-	@go run ./main.go
+	@go run ./cmd/cypherstorm
 
-rm:
-	@rm ./cli
+test:
+	@go test ./...
+
+clean:
+	@rm -f ./cypherstorm
 
 key-gen:
 	@openssl rand -out key.bin 32
-	@echo "generated key saved to key.bin"
+	@chmod 600 key.bin
+	@echo "generated 32-byte raw key at key.bin"

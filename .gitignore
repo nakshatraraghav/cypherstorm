@@ -1,5 +1,6 @@
 build
-cli
+cypherstorm
 .env
 key.bin
 benchmark_report.log
+benchmark*.xlsx
